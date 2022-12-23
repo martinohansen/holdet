@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 import requests
+from pulp import LpInteger, LpMaximize, LpProblem, LpVariable, value  # type: ignore
 
 url = "https://data.fotmob.com/stats/47/season/17664/expected_goals.json"
 response = requests.request("GET", url)
@@ -36,6 +37,18 @@ class Baller:
 
     similarity_threshold: float = 0.8
 
+    def __hash__(self):
+        return hash(tuple(self.name))
+
+    def __repr__(self) -> str:
+        return (
+            f"Baller(name={self.name!r}, position={self.position!r},"
+            f" value={self.value / 1000000:.1f}M,"
+            f" popularity={self.popularity * 100:.1f}%,"
+            f" xGrowth={self.xGrowth / 1000000:.3f}M,"
+            f" xGrowthPerValue={self.xGrowthPerValue / 1000000:.3f}"
+        )
+
     def __populate_stat(self, stats) -> float:
         for stat in stats:
             similarity = self.__similarity(stat["ParticipantName"])
@@ -46,43 +59,132 @@ class Baller:
     def __similarity(self, to):
         return SequenceMatcher(None, self.name, to).ratio()
 
-    def __per_value(self, stat: float) -> float:
-        if self.value != 0 and stat != 0:
-            return self.value / stat
-        else:
-            return 99999999
+    @property
+    def keeper(self) -> bool:
+        if self.position == 6:
+            return True
+        return False
+
+    @property
+    def defense(self) -> bool:
+        if self.position == 7:
+            return True
+        return False
+
+    @property
+    def midfielder(self) -> bool:
+        if self.position == 8:
+            return True
+        return False
+
+    @property
+    def forward(self) -> bool:
+        if self.position == 9:
+            return True
+        return False
+
+    @property
+    def xGrowthPerValue(self) -> float:
+        return self.xGrowth / self.value
+
+    @property
+    def xGrowth(self) -> float:
+        growth: float = 0
+
+        def __goal_bonus(self) -> float:
+            if self.keeper:
+                return 250000
+            elif self.defense:
+                return 175000
+            elif self.midfielder:
+                return 150000
+            elif self.forward:
+                return 125000
+            else:
+                return 0
+
+        def __assist_bonus(self) -> float:
+            return 60000
+
+        def __clean_sheet_bonus(self) -> float:
+            if self.keeper:
+                return 75000
+            elif self.defense:
+                return 50000
+            else:
+                return 0
+
+        growth += __goal_bonus(self) * self.xG
+        growth += __assist_bonus(self) * self.xA
+        growth += __clean_sheet_bonus(self) * self.CS
+
+        return growth
 
     @property
     def xG(self) -> float:
         return self.__populate_stat(expected_goals["TopLists"][0]["StatList"])
 
     @property
-    def xGPerValue(self) -> float:
-        return self.__per_value(self.xG)
-
-    @property
     def xA(self) -> float:
         return self.__populate_stat(expected_assists["TopLists"][0]["StatList"])
-
-    @property
-    def xAPerValue(self) -> float:
-        return self.__per_value(self.xA)
 
     @property
     def CS(self) -> float:
         return self.__populate_stat(clean_sheet["TopLists"][0]["StatList"])
 
-    @property
-    def CSPerValue(self) -> float:
-        return self.__per_value(self.CS)
+
+def find_optimal_team(ballers, value_limit):
+    # Create a linear programming problem
+    problem = LpProblem("Optimal Team", LpMaximize)
+
+    # Create a dictionary to store the variables for each baller
+    variables = {}
+
+    # Create a variable for each baller, with a lower bound of 0 and an upper bound of 1
+    for baller in ballers:
+        variables[baller] = LpVariable(baller.name, 0, 1, LpInteger)
+
+    # Set the objective function to maximize the xGrowth
+    problem += sum(variables[b] * b.xGrowth for b in ballers)
+
+    # Add the constraint that the value must be less than or equal to the value limit
+    problem += sum(variables[b] * b.value for b in ballers) <= value_limit
+
+    # Add the constraint that there must be exactly 11 players in total
+    problem += sum(variables[b] for b in ballers) == 11
+
+    # Add the constraint that there must be exactly 1 keeper
+    problem += sum(variables[b] for b in ballers if b.keeper) == 1
+
+    # Add the constraint that there must be between 3 and 5 defenders
+    problem += sum(variables[b] for b in ballers if b.defense) >= 3
+    problem += sum(variables[b] for b in ballers if b.defense) <= 5
+
+    # Add the constraint that there must be between 3 and 5 midfielders
+    problem += sum(variables[b] for b in ballers if b.midfielder) >= 3
+    problem += sum(variables[b] for b in ballers if b.midfielder) <= 5
+
+    # Add the constraint that there must be between 1 and 3 forwards
+    problem += sum(variables[b] for b in ballers if b.forward) >= 1
+    problem += sum(variables[b] for b in ballers if b.forward) <= 3
+
+    # Solve the problem
+    problem.solve()
+
+    # Initialize an empty list to store the optimal team
+    optimal_team = []
+
+    # Iterate through the ballers
+    for baller in ballers:
+        # If the variable for the baller is non-zero, add it to the optimal team
+        if value(variables[baller]) > 0:
+            optimal_team.append(baller)
+
+    return optimal_team
 
 
 if __name__ == "__main__":
-    keepers = []
-    defenses = []
-    midfielders = []
-    forwards = []
-
+    ballers = []
     # Loop over all person in tournament
     for person in tournament["persons"]:
         whoami = person["firstname"] + " " + person["lastname"]
@@ -102,41 +204,9 @@ if __name__ == "__main__":
                             trend=character["values"]["trend"],
                             position=player["position"]["id"],
                         )
+                        if x.value != 0:
+                            ballers.append(x)
 
-                        # Map positions to separate lists of players
-                        if x.position == 6:
-                            keepers.append(x)
-                        elif x.position == 7:
-                            defenses.append(x)
-                        elif x.position == 8:
-                            midfielders.append(x)
-                        elif x.position == 9:
-                            forwards.append(x)
-
-    print("# Top 5 keepers by clean sheets")
-    for keeper in sorted(keepers, key=lambda x: x.CSPerValue)[:5]:
-        print(f"{keeper.CSPerValue}: {keeper}")
-
-    print("\n# Top 5 defense by clean sheets")
-    for defense in sorted(defenses, key=lambda x: [x.CSPerValue])[:5]:
-        print(f"{defense.CSPerValue}: {defense}")
-
-    print("\n# Top 5 defense by xA")
-    for defense in sorted(defenses, key=lambda x: [x.xAPerValue])[:5]:
-        print(f"{defense.xAPerValue}: {defense}")
-
-    print("\n# Top 5 defense by xG")
-    for defense in sorted(defenses, key=lambda x: [x.xGPerValue])[:5]:
-        print(f"{defense.xGPerValue}: {defense}")
-
-    print("\n# Top 5 midfielder by xA")
-    for midfielder in sorted(midfielders, key=lambda x: [x.xAPerValue])[:5]:
-        print(f"{midfielder.xAPerValue}: {midfielder}")
-
-    print("\n# Top 5 midfielder by xG")
-    for midfielder in sorted(midfielders, key=lambda x: [x.xGPerValue])[:5]:
-        print(f"{midfielder.xGPerValue}: {midfielder}")
-
-    print("\n# Top 5 forwards by xG")
-    for forward in sorted(forwards, key=lambda x: x.xGPerValue)[:5]:
-        print(f"{forward.xGPerValue}: {forward}")
+    team = find_optimal_team(ballers, 50000000)
+    for player in sorted(team, key=lambda x: x.position):
+        print(player)
