@@ -41,12 +41,21 @@ class Baller:
         return hash(tuple(self.name))
 
     def __repr__(self) -> str:
+        position = ""
+        if self.keeper:
+            position = "keeper"
+        elif self.defense:
+            position = "defense"
+        elif self.midfielder:
+            position = "midfielder"
+        elif self.forward:
+            position = "forward"
+
         return (
-            f"Baller(name={self.name!r}, position={self.position!r},"
+            f"Baller(name={self.name!r}, position={position!r},"
             f" value={self.value / 1000000:.1f}M,"
             f" popularity={self.popularity * 100:.1f}%,"
-            f" xGrowth={self.xGrowth / 1000000:.3f}M,"
-            f" xGrowthPerValue={self.xGrowthPerValue / 1000000:.3f}"
+            f" xGrowth={self.xGrowth / 1000000:.3f}M"
         )
 
     def __populate_stat(self, stats) -> float:
@@ -82,10 +91,6 @@ class Baller:
         if self.position == 9:
             return True
         return False
-
-    @property
-    def xGrowthPerValue(self) -> float:
-        return self.xGrowth / self.value
 
     @property
     def xGrowth(self) -> float:
@@ -135,7 +140,7 @@ class Baller:
 
 def find_optimal_team(ballers, value_limit):
     # Create a linear programming problem
-    problem = LpProblem("Optimal Team", LpMaximize)
+    problem = LpProblem("OptimalTeam", LpMaximize)
 
     # Create a dictionary to store the variables for each baller
     variables = {}
@@ -207,6 +212,30 @@ if __name__ == "__main__":
                         if x.value != 0:
                             ballers.append(x)
 
-    team = find_optimal_team(ballers, 50000000)
-    for player in sorted(team, key=lambda x: x.position):
-        print(player)
+    team: list[Baller] = find_optimal_team(ballers, 50000000)
+
+    team_by_position: dict[str, list[Baller]] = {
+        "keepers": [],
+        "defenses": [],
+        "midfielders": [],
+        "forwards": [],
+    }
+    for player in team:
+        if player.keeper:
+            team_by_position["keepers"].append(player)
+        if player.defense:
+            team_by_position["defenses"].append(player)
+        if player.midfielder:
+            team_by_position["midfielders"].append(player)
+        if player.forward:
+            team_by_position["forwards"].append(player)
+
+    for position, players in team_by_position.items():
+        print(f"# {position.title()} ({len(players)})")
+        for player in players:
+            print(player)
+        print()
+    print(
+        f"Combined value: {sum(p.value for p in team) / 1000000:.2f}M,"
+        f" total expected growth: {sum(p.xGrowth for p in team) / 1000000:.2f}M"
+    )
