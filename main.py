@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
+import sys
+import urllib
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from functools import cache
+from typing import Union
 
 import requests
 from pulp import LpInteger, LpMaximize, LpProblem, LpVariable, value  # type: ignore
@@ -18,6 +22,10 @@ url = "https://data.fotmob.com/stats/47/season/17664/clean_sheet.json"
 response = requests.request("GET", url)
 clean_sheet = response.json()
 
+url = "https://data.fotmob.com/stats/47/season/17664/clean_sheet_team.json"
+response = requests.request("GET", url)
+clean_sheet_team = response.json()
+
 url = "https://api.holdet.dk/tournaments/422?appid=holdet"
 response = requests.request("GET", url)
 tournament = response.json()
@@ -26,16 +34,22 @@ url = "https://api.holdet.dk/games/644/rounds/1/statistics?appid=holdet"
 response = requests.request("GET", url)
 game = response.json()
 
+url = "https://www.fotmob.com/api/leagues?id=47"
+response = requests.request("GET", url)
+teams = response.json()
+
 
 @dataclass
 class Baller:
     name: str
+    team: str
     value: int
     popularity: float
     trend: int
     position: int
 
     similarity_threshold: float = 0.8
+    api_timeout: float = 5
 
     def __hash__(self):
         return hash(tuple(self.name))
@@ -52,21 +66,61 @@ class Baller:
             position = "forward"
 
         return (
-            f"Baller(name={self.name!r}, position={position!r},"
+            f"Baller(name={self.name!r}, team={self.team!r}, position={position!r},"
             f" value={self.value / 1000000:.1f}M,"
             f" popularity={self.popularity * 100:.1f}%,"
-            f" xGrowth={self.xGrowth / 1000000:.3f}M"
+            f" xGrowth={self.xGrowth / 1000000:.3f}M, fotmob={self.fotmobID})"
         )
 
     def __populate_stat(self, stats) -> float:
         for stat in stats:
-            similarity = self.__similarity(stat["ParticipantName"])
-            if similarity > self.similarity_threshold:
+            if self.__is_similar(self.name, stat["ParticipantName"]):
                 return stat["StatValue"]
         return 0
 
-    def __similarity(self, to):
-        return SequenceMatcher(None, self.name, to).ratio()
+    def __populate_stat_team(self, stats) -> float:
+        for stat in stats:
+            if self.__is_similar(self.team, stat["ParticipantName"]):
+                return stat["StatValue"]
+        return 0
+
+    def __similarity(self, a: str, b: str) -> float:
+        """Returns the similarity between a and b in percent 0-1"""
+        return SequenceMatcher(None, a, b).ratio()
+
+    def __is_similar(self, a: str, b: str) -> bool:
+        """Returns a bool if a and b is within the similarity threshold"""
+        similarity = self.__similarity(a, b)
+        if similarity > self.similarity_threshold:
+            return True
+        else:
+            return False
+
+    @cache
+    def __get_api(self, url) -> requests.Response:
+        return requests.request("GET", url, timeout=self.api_timeout)
+
+    @cache
+    def __search_fotmob(self, term: str) -> dict:
+        response = self.__get_api(f"https://www.fotmob.com/api/searchData?term={term}")
+        return response.json()
+
+    @cache
+    def __fotmob_match(self) -> Union[None, dict]:
+        search = self.__search_fotmob(urllib.parse.quote(self.name))
+        if search.get("squad"):
+            for player in search["squad"]["dataset"]:
+                if self.__is_similar(self.name, player["name"]):
+                    return player
+        return None
+
+    @property
+    def fotmobID(self) -> Union[None, int]:
+        player = self.__fotmob_match()
+        if player:
+            return player["id"]
+        else:
+            return None
 
     @property
     def keeper(self) -> bool:
@@ -93,37 +147,191 @@ class Baller:
         return False
 
     @property
+    def games(self) -> int:
+        if self.fotmobID:
+            response = self.__get_api(
+                f"https://www.fotmob.com/api/playerData?id={self.fotmobID}"
+            )
+            player = response.json()
+            if player.get("lastLeague"):
+                return int(player["lastLeague"]["playerProps"][0]["value"])
+        return 0
+
+    @property
+    def team_all(self) -> Union[None, dict]:
+        for team in teams["table"][0]["data"]["table"]["all"]:
+            if self.__is_similar(self.team, team["name"]):
+                return team
+        return None
+
+    @property
+    def team_home(self) -> Union[None, dict]:
+        for team in teams["table"][0]["data"]["table"]["home"]:
+            if self.__is_similar(self.team, team["name"]):
+                return team
+        return None
+
+    @property
+    def team_away(self) -> Union[None, dict]:
+        for team in teams["table"][0]["data"]["table"]["away"]:
+            if self.__is_similar(self.team, team["name"]):
+                return team
+        return None
+
+    @property
+    def wins_home(self) -> int:
+        if self.team_home:
+            return int(self.team_home["wins"])
+        else:
+            return 0
+
+    @property
+    def wins_away(self) -> int:
+        if self.team_away:
+            return int(self.team_away["wins"])
+        else:
+            return 0
+
+    @property
+    def wins(self) -> int:
+        return self.wins_home + self.wins_away
+
+    @property
+    def draws_home(self) -> int:
+        if self.team_home:
+            return int(self.team_home["draws"])
+        else:
+            return 0
+
+    @property
+    def draws_away(self) -> int:
+        if self.team_away:
+            return int(self.team_away["draws"])
+        else:
+            return 0
+
+    @property
+    def draws(self) -> int:
+        return self.draws_home + self.draws_away
+
+    @property
+    def losses_home(self) -> int:
+        if self.team_home:
+            return int(self.team_home["losses"])
+        else:
+            return 0
+
+    @property
+    def losses_away(self) -> int:
+        if self.team_away:
+            return int(self.team_away["losses"])
+        else:
+            return 0
+
+    @property
+    def total_games(self) -> int:
+        return self.wins + self.draws + self.losses
+
+    @property
+    def losses(self) -> int:
+        return self.losses_home + self.losses_away
+
+    @property
+    def goals_scored(self) -> int:
+        if self.team_all:
+            scores: str = self.team_all["scoresStr"]
+            scores.split("-")
+            return int(scores[0])
+        else:
+            return 0
+
+    @property
+    def goals_conceded(self) -> int:
+        if self.team_all:
+            scores: str = self.team_all["scoresStr"]
+            scores.split("-")
+            return int(scores[1])
+        else:
+            return 0
+
+    @property
+    def participation_rate(self) -> float:
+        if self.total_games != 0:
+            return self.games / self.total_games
+        else:
+            return 0
+
+    @property
+    def CS(self) -> float:
+        return self.__populate_stat_team(clean_sheet_team["TopLists"][0]["StatList"])
+
+    @property
     def xGrowth(self) -> float:
         growth: float = 0
 
-        def __goal_bonus(self) -> float:
-            if self.keeper:
-                return 250000
-            elif self.defense:
-                return 175000
-            elif self.midfielder:
-                return 150000
-            elif self.forward:
-                return 125000
-            else:
-                return 0
+        if self.keeper:
+            goal_points = 250000
+        elif self.defense:
+            goal_points = 175000
+        elif self.midfielder:
+            goal_points = 150000
+        elif self.forward:
+            goal_points = 125000
+        else:
+            goal_points = 0
 
-        def __assist_bonus(self) -> float:
-            return 60000
+        if self.keeper:
+            clean_sheet_points = 75000
+        elif self.defense:
+            clean_sheet_points = 50000
+        else:
+            clean_sheet_points = 0
 
-        def __clean_sheet_bonus(self) -> float:
-            if self.keeper:
-                return 75000
-            elif self.defense:
-                return 50000
-            else:
-                return 0
+        growth += goal_points * self.xG
+        growth += clean_sheet_points * self.CS
+        growth += 60000 * self.xA
 
-        growth += __goal_bonus(self) * self.xG
-        growth += __assist_bonus(self) * self.xA
-        growth += __clean_sheet_bonus(self) * self.CS
+        growth += 25000 * self.xWin
+        growth += 5000 * self.xDraw
+        growth += -15000 * self.xLoss
+        growth += 10000 * self.xTeamGoals
+        growth += -8000 * self.xTeamConceded
+        growth += 10000 * self.xWinAway
+        growth += -1000 * self.xLossHome
 
         return growth
+
+    @property
+    def xTeamGoals(self) -> float:
+        return self.participation_rate * self.goals_scored
+
+    @property
+    def xTeamConceded(self) -> float:
+        return self.participation_rate * self.goals_conceded
+
+    @property
+    def xWin(self) -> float:
+        return self.participation_rate * self.wins
+
+    @property
+    def xDraw(self) -> float:
+        return self.participation_rate * self.draws
+
+    @property
+    def xLoss(self) -> float:
+        return self.participation_rate * self.losses
+
+    @property
+    def xLossHome(self) -> float:
+        return self.participation_rate * self.losses_home
+
+    @property
+    def xWinAway(self) -> float:
+        return self.participation_rate * self.wins_away
+
+    @property
+    def xCS(self) -> float:
+        return self.participation_rate * self.CS
 
     @property
     def xG(self) -> float:
@@ -132,10 +340,6 @@ class Baller:
     @property
     def xA(self) -> float:
         return self.__populate_stat(expected_assists["TopLists"][0]["StatList"])
-
-    @property
-    def CS(self) -> float:
-        return self.__populate_stat(clean_sheet["TopLists"][0]["StatList"])
 
 
 def find_optimal_team(ballers, value_limit):
@@ -188,31 +392,63 @@ def find_optimal_team(ballers, value_limit):
     return optimal_team
 
 
+def debugger(type, value, tb):
+    if hasattr(sys, "ps1") or not sys.stderr.isatty():
+        # we are in interactive mode or we don't have a tty-like
+        # device, so we call the default hook
+        sys.__excepthook__(type, value, tb)
+    else:
+        import pdb
+        import traceback
+
+        # we are NOT in interactive mode, print the exception...
+        traceback.print_exception(type, value, tb)
+        print
+        # ...then start the debugger in post-mortem mode.
+        pdb.post_mortem(tb)
+
+
 if __name__ == "__main__":
-    ballers = []
-    # Loop over all person in tournament
-    for person in tournament["persons"]:
-        whoami = person["firstname"] + " " + person["lastname"]
+    sys.excepthook = debugger
 
-        # Loop over all players in tournament
-        for player in tournament["players"]:
-            # If player and person is the same
-            if player["person"]["id"] == person["id"]:
-                # Loop over characters in game
-                for character in game:
-                    # If character is player
-                    if character["player"]["id"] == player["id"]:
-                        x = Baller(
-                            name=whoami,
-                            value=character["values"]["value"],
-                            popularity=character["values"]["popularity"],
-                            trend=character["values"]["trend"],
-                            position=player["position"]["id"],
-                        )
-                        if x.value != 0:
-                            ballers.append(x)
+    ballers: list[Baller] = []
 
-    team: list[Baller] = find_optimal_team(ballers, 50000000)
+    # Find all players in the tournament who have a character in the game
+    tournament_players = [
+        player
+        for player in tournament["players"]
+        if any(character["player"]["id"] == player["id"] for character in game)
+    ]
+
+    # Loop over the players
+    for player in tournament_players:
+        # Find the team in the tournament that the player belongs to
+        team = next(t for t in tournament["teams"] if t["id"] == player["team"]["id"])
+
+        # Find the character for the player in the game
+        character = next(
+            character for character in game if character["player"]["id"] == player["id"]
+        )
+
+        # Find the person for the player in the tournament
+        person = next(
+            person
+            for person in tournament["persons"]
+            if person["id"] == player["person"]["id"]
+        )
+
+        baller = Baller(
+            name=person["firstname"] + " " + person["lastname"],
+            value=character["values"]["value"],
+            popularity=character["values"]["popularity"],
+            trend=character["values"]["trend"],
+            position=player["position"]["id"],
+            team=team["name"],
+        )
+        if baller.value != 0:
+            ballers.append(baller)
+
+    solution: list[Baller] = find_optimal_team(ballers, 50000000)
 
     team_by_position: dict[str, list[Baller]] = {
         "keepers": [],
@@ -220,7 +456,7 @@ if __name__ == "__main__":
         "midfielders": [],
         "forwards": [],
     }
-    for player in team:
+    for player in solution:
         if player.keeper:
             team_by_position["keepers"].append(player)
         if player.defense:
@@ -236,6 +472,7 @@ if __name__ == "__main__":
             print(player)
         print()
     print(
-        f"Combined value: {sum(p.value for p in team) / 1000000:.2f}M,"
-        f" total expected growth: {sum(p.xGrowth for p in team) / 1000000:.2f}M"
+        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, total"
+        f" expected growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M, total"
+        f" player count: {len(ballers)}"
     )
