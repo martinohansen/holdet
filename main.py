@@ -1,41 +1,43 @@
 #!/usr/bin/env python3
 
+import concurrent.futures
 import sys
 import urllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from functools import cache
 from typing import Union
 
 import requests
 from pulp import LpInteger, LpMaximize, LpProblem, LpVariable, value  # type: ignore
 
+session = requests.Session()
+
 url = "https://data.fotmob.com/stats/47/season/17664/expected_goals.json"
-response = requests.request("GET", url)
+response = session.get(url)
 expected_goals = response.json()
 
 url = "https://data.fotmob.com/stats/47/season/17664/expected_assists.json"
-response = requests.request("GET", url)
+response = session.get(url)
 expected_assists = response.json()
 
 url = "https://data.fotmob.com/stats/47/season/17664/clean_sheet.json"
-response = requests.request("GET", url)
+response = session.get(url)
 clean_sheet = response.json()
 
 url = "https://data.fotmob.com/stats/47/season/17664/clean_sheet_team.json"
-response = requests.request("GET", url)
+response = session.get(url)
 clean_sheet_team = response.json()
 
 url = "https://api.holdet.dk/tournaments/422?appid=holdet"
-response = requests.request("GET", url)
+response = session.get(url)
 tournament = response.json()
 
 url = "https://api.holdet.dk/games/644/rounds/1/statistics?appid=holdet"
-response = requests.request("GET", url)
+response = session.get(url)
 game = response.json()
 
 url = "https://www.fotmob.com/api/leagues?id=47"
-response = requests.request("GET", url)
+response = session.get(url)
 teams = response.json()
 
 
@@ -50,6 +52,52 @@ class Baller:
 
     similarity_threshold: float = 0.8
     api_timeout: float = 5
+
+    fotmob: Union[None, dict] = field(init=False)
+    team_all: Union[None, dict] = field(init=False)
+    team_home: Union[None, dict] = field(init=False)
+    team_away: Union[None, dict] = field(init=False)
+
+    def __post_init__(self):
+        player = self.__fotmob_match()
+        if player:
+            fotmob_id = player["id"]
+            response = self.__get_api(
+                f"https://www.fotmob.com/api/playerData?id={fotmob_id}"
+            )
+            self.fotmob = response.json()
+        else:
+            self.fotmob = None
+
+        for team in teams["table"][0]["data"]["table"]["all"]:
+            if self.__is_similar(self.team, team["name"]):
+                self.team_all = team
+        self.team_all = None
+
+        for team in teams["table"][0]["data"]["table"]["home"]:
+            if self.__is_similar(self.team, team["name"]):
+                self.team_home = team
+        self.team_home = None
+
+        for team in teams["table"][0]["data"]["table"]["away"]:
+            if self.__is_similar(self.team, team["name"]):
+                self.team_away = team
+        self.team_away = None
+
+    def __get_api(self, url) -> requests.Response:
+        return session.get(url, timeout=self.api_timeout)
+
+    def __search_fotmob(self, term: str) -> dict:
+        response = self.__get_api(f"https://www.fotmob.com/api/searchData?term={term}")
+        return response.json()
+
+    def __fotmob_match(self) -> Union[None, dict]:
+        search = self.__search_fotmob(urllib.parse.quote(self.name))
+        if search.get("squad"):
+            for player in search["squad"]["dataset"]:
+                if self.__is_similar(self.name, player["name"]):
+                    return player
+        return None
 
     def __hash__(self):
         return hash(tuple(self.name))
@@ -69,7 +117,7 @@ class Baller:
             f"Baller(name={self.name!r}, team={self.team!r}, position={position!r},"
             f" value={self.value / 1000000:.1f}M,"
             f" popularity={self.popularity * 100:.1f}%,"
-            f" xGrowth={self.xGrowth / 1000000:.3f}M, fotmob={self.fotmobID})"
+            f" xGrowth={self.xGrowth / 1000000:.3f}M)"
         )
 
     def __populate_stat(self, stats) -> float:
@@ -95,32 +143,6 @@ class Baller:
             return True
         else:
             return False
-
-    @cache
-    def __get_api(self, url) -> requests.Response:
-        return requests.request("GET", url, timeout=self.api_timeout)
-
-    @cache
-    def __search_fotmob(self, term: str) -> dict:
-        response = self.__get_api(f"https://www.fotmob.com/api/searchData?term={term}")
-        return response.json()
-
-    @cache
-    def __fotmob_match(self) -> Union[None, dict]:
-        search = self.__search_fotmob(urllib.parse.quote(self.name))
-        if search.get("squad"):
-            for player in search["squad"]["dataset"]:
-                if self.__is_similar(self.name, player["name"]):
-                    return player
-        return None
-
-    @property
-    def fotmobID(self) -> Union[None, int]:
-        player = self.__fotmob_match()
-        if player:
-            return player["id"]
-        else:
-            return None
 
     @property
     def keeper(self) -> bool:
@@ -148,35 +170,10 @@ class Baller:
 
     @property
     def games(self) -> int:
-        if self.fotmobID:
-            response = self.__get_api(
-                f"https://www.fotmob.com/api/playerData?id={self.fotmobID}"
-            )
-            player = response.json()
-            if player.get("lastLeague"):
-                return int(player["lastLeague"]["playerProps"][0]["value"])
+        if self.fotmob:
+            if self.fotmob.get("lastLeague"):
+                return int(self.fotmob["lastLeague"]["playerProps"][0]["value"])
         return 0
-
-    @property
-    def team_all(self) -> Union[None, dict]:
-        for team in teams["table"][0]["data"]["table"]["all"]:
-            if self.__is_similar(self.team, team["name"]):
-                return team
-        return None
-
-    @property
-    def team_home(self) -> Union[None, dict]:
-        for team in teams["table"][0]["data"]["table"]["home"]:
-            if self.__is_similar(self.team, team["name"]):
-                return team
-        return None
-
-    @property
-    def team_away(self) -> Union[None, dict]:
-        for team in teams["table"][0]["data"]["table"]["away"]:
-            if self.__is_similar(self.team, team["name"]):
-                return team
-        return None
 
     @property
     def wins_home(self) -> int:
@@ -392,6 +389,32 @@ def find_optimal_team(ballers, value_limit):
     return optimal_team
 
 
+def init_baller(player: dict, game: dict, tournament: dict) -> Baller:
+    # Find the team in the tournament that the player belongs to
+    team = next(t for t in tournament["teams"] if t["id"] == player["team"]["id"])
+
+    # Find the character for the player in the game
+    character = next(
+        character for character in game if character["player"]["id"] == player["id"]
+    )
+
+    # Find the person for the player in the tournament
+    person = next(
+        person
+        for person in tournament["persons"]
+        if person["id"] == player["person"]["id"]
+    )
+
+    return Baller(
+        name=person["firstname"] + " " + person["lastname"],
+        value=character["values"]["value"],
+        popularity=character["values"]["popularity"],
+        trend=character["values"]["trend"],
+        position=player["position"]["id"],
+        team=team["name"],
+    )
+
+
 def debugger(type, value, tb):
     if hasattr(sys, "ps1") or not sys.stderr.isatty():
         # we are in interactive mode or we don't have a tty-like
@@ -420,33 +443,19 @@ if __name__ == "__main__":
         if any(character["player"]["id"] == player["id"] for character in game)
     ]
 
-    # Loop over the players
-    for player in tournament_players:
-        # Find the team in the tournament that the player belongs to
-        team = next(t for t in tournament["teams"] if t["id"] == player["team"]["id"])
+    # Use a ThreadPoolExecutor to run the init_baller function concurrently
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Submit the init_baller function for each player to the executor
+        results = [
+            executor.submit(init_baller, player, game, tournament)
+            for player in tournament_players
+        ]
 
-        # Find the character for the player in the game
-        character = next(
-            character for character in game if character["player"]["id"] == player["id"]
-        )
-
-        # Find the person for the player in the tournament
-        person = next(
-            person
-            for person in tournament["persons"]
-            if person["id"] == player["person"]["id"]
-        )
-
-        baller = Baller(
-            name=person["firstname"] + " " + person["lastname"],
-            value=character["values"]["value"],
-            popularity=character["values"]["popularity"],
-            trend=character["values"]["trend"],
-            position=player["position"]["id"],
-            team=team["name"],
-        )
-        if baller.value != 0:
-            ballers.append(baller)
+        # Iterate over the results and append the ballers to the ballers list
+        for result in concurrent.futures.as_completed(results):
+            baller = result.result()
+            if baller.value != 0:
+                ballers.append(baller)
 
     solution: list[Baller] = find_optimal_team(ballers, 50000000)
 
