@@ -69,20 +69,20 @@ class Baller:
         else:
             self.fotmob = None
 
+        self.team_all = None
         for team in teams["table"][0]["data"]["table"]["all"]:
             if self.__is_similar(self.team, team["name"]):
                 self.team_all = team
-        self.team_all = None
 
+        self.team_home = None
         for team in teams["table"][0]["data"]["table"]["home"]:
             if self.__is_similar(self.team, team["name"]):
                 self.team_home = team
-        self.team_home = None
 
+        self.team_away = None
         for team in teams["table"][0]["data"]["table"]["away"]:
             if self.__is_similar(self.team, team["name"]):
                 self.team_away = team
-        self.team_away = None
 
     def __get_api(self, url) -> requests.Response:
         return session.get(url, timeout=self.api_timeout)
@@ -113,11 +113,16 @@ class Baller:
         elif self.forward:
             position = "forward"
 
+        if self.fotmob:
+            fotmob = self.fotmob["id"]
+        else:
+            fotmob = False
+
         return (
             f"Baller(name={self.name!r}, team={self.team!r}, position={position!r},"
             f" value={self.value / 1000000:.1f}M,"
             f" popularity={self.popularity * 100:.1f}%,"
-            f" xGrowth={self.xGrowth / 1000000:.3f}M)"
+            f" xGrowth={self.xGrowth / 1000000:.3f}M, {fotmob=!r})"
         )
 
     def __populate_stat(self, stats) -> float:
@@ -174,6 +179,13 @@ class Baller:
             if self.fotmob.get("lastLeague"):
                 return int(self.fotmob["lastLeague"]["playerProps"][0]["value"])
         return 0
+
+    @property
+    def injury(self) -> bool:
+        if self.fotmob:
+            if self.fotmob["injuryInformation"] is not None:
+                return True
+        return False
 
     @property
     def wins_home(self) -> int:
@@ -285,7 +297,7 @@ class Baller:
             clean_sheet_points = 0
 
         growth += goal_points * self.xG
-        growth += clean_sheet_points * self.CS
+        growth += clean_sheet_points * self.xCS
         growth += 60000 * self.xA
 
         growth += 25000 * self.xWin
@@ -296,7 +308,18 @@ class Baller:
         growth += 10000 * self.xWinAway
         growth += -1000 * self.xLossHome
 
+        growth += 7000 * self.xIn
+        growth += -5000 * self.xOut
+
         return growth
+
+    @property
+    def xIn(self) -> float:
+        return self.participation_rate * self.total_games
+
+    @property
+    def xOut(self) -> float:
+        return self.total_games - self.xIn
 
     @property
     def xTeamGoals(self) -> float:
@@ -358,6 +381,9 @@ def find_optimal_team(ballers, value_limit):
 
     # Add the constraint that there must be exactly 11 players in total
     problem += sum(variables[b] for b in ballers) == 11
+
+    # Add the constraint that no player may be injured
+    problem += sum(variables[b] for b in ballers if b.injury) == 0
 
     # Add the constraint that there must be exactly 1 keeper
     problem += sum(variables[b] for b in ballers if b.keeper) == 1
@@ -454,7 +480,8 @@ if __name__ == "__main__":
         # Iterate over the results and append the ballers to the ballers list
         for result in concurrent.futures.as_completed(results):
             baller = result.result()
-            if baller.value != 0:
+            # Only append baller if they have value and at least 2% popularity
+            if baller.value != 0 and baller.popularity > 0.02:
                 ballers.append(baller)
 
     solution: list[Baller] = find_optimal_team(ballers, 50000000)
@@ -482,6 +509,7 @@ if __name__ == "__main__":
         print()
     print(
         f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, total"
-        f" expected growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M, total"
-        f" player count: {len(ballers)}"
+        f" expected growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M, average"
+        f" popularity = {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
+        f" players considered: {len(ballers)}"
     )
