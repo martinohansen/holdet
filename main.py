@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import concurrent.futures
+import copy
 import math
 import sys
 import urllib
@@ -393,6 +394,12 @@ class Baller:
 
 
 def find_optimal_team(ballers: list[Baller], value_limit):
+    # Add the captain variant of each baller to the list of ballers
+    captain_variant = copy.deepcopy(ballers)
+    for baller in captain_variant:
+        baller.captain = True
+    ballers = ballers + captain_variant
+
     # Create a linear programming problem
     problem = LpProblem("OptimalTeam", LpMaximize)
 
@@ -402,7 +409,12 @@ def find_optimal_team(ballers: list[Baller], value_limit):
     # Create a variable for each baller, with a lower bound of 0 and an upper
     # bound of 1
     for baller in ballers:
-        variables[baller] = LpVariable(baller.name, 0, 1, LpInteger)
+        identifier = f"{baller.name}_{str(baller.captain)}"
+        variables[baller] = LpVariable(identifier, 0, 1, LpInteger)
+
+    # Add the constraint that no two ballers with the same name can be selected
+    for baller in ballers:
+        problem += sum(variables[b] for b in ballers if b.name == baller.name) <= 1
 
     # Set the objective function to maximize the xGrowth
     problem += sum(variables[b] * b.xGrowth for b in ballers)
@@ -412,6 +424,9 @@ def find_optimal_team(ballers: list[Baller], value_limit):
 
     # Add the constraint that there must be exactly 11 players in total
     problem += sum(variables[b] for b in ballers) == 11
+
+    # Add the constraint that there must be exactly 1 captain on the team
+    problem += sum(variables[b] for b in ballers if b.captain) == 1
 
     # Add the constraint that no player may be injured
     problem += sum(variables[b] for b in ballers if b.injury) == 0
