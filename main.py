@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import concurrent.futures
+import math
 import sys
 import urllib
 from dataclasses import dataclass, field
@@ -49,6 +50,7 @@ class Baller:
     popularity: float
     trend: int
     position: int
+    captain: bool = False
 
     similarity_threshold: float = 0.8
     api_timeout: float = 5
@@ -122,7 +124,8 @@ class Baller:
             f"Baller(name={self.name!r}, team={self.team!r}, position={position!r},"
             f" value={self.value / 1000000:.1f}M,"
             f" popularity={self.popularity * 100:.1f}%,"
-            f" xGrowth={self.xGrowth / 1000000:.3f}M, {fotmob=!r})"
+            f" xGrowth={self.xGrowth / 1000000:.3f}M, captain={self.captain!r},"
+            f" {fotmob=!r})"
         )
 
     def __populate_stat(self, stats) -> float:
@@ -248,8 +251,7 @@ class Baller:
     @property
     def goals_scored(self) -> int:
         if self.team_all:
-            scores: str = self.team_all["scoresStr"]
-            scores.split("-")
+            scores: str = self.team_all["scoresStr"].split("-")
             return int(scores[0])
         else:
             return 0
@@ -257,8 +259,7 @@ class Baller:
     @property
     def goals_conceded(self) -> int:
         if self.team_all:
-            scores: str = self.team_all["scoresStr"]
-            scores.split("-")
+            scores: str = self.team_all["scoresStr"].split("-")
             return int(scores[1])
         else:
             return 0
@@ -296,10 +297,14 @@ class Baller:
         else:
             clean_sheet_points = 0
 
+        # Goals and assists
         growth += goal_points * self.xG
-        growth += clean_sheet_points * self.xCS
         growth += 60000 * self.xA
 
+        # Fair play
+        # TODO: Add red and yellow cards to growth estimation
+
+        # Team performance
         growth += 25000 * self.xWin
         growth += 5000 * self.xDraw
         growth += -15000 * self.xLoss
@@ -308,10 +313,35 @@ class Baller:
         growth += 10000 * self.xWinAway
         growth += -1000 * self.xLossHome
 
+        # Special
+        growth += clean_sheet_points * self.xCS
         growth += 7000 * self.xIn
         growth += -5000 * self.xOut
+        growth += 100000 * self.xHattrick
+
+        # Finance
+        if self.captain:
+            growth += self.xGrowth * 2
 
         return growth
+
+    def __poisson_probability(self, lambda_, x):
+        return (math.exp(-lambda_) * lambda_**x) / math.factorial(x)
+
+    @property
+    def xHattrick(self) -> float:
+        if self.games == 0:
+            return 0
+
+        average_xG_per_game = self.xG / self.games
+
+        # More then 9 goals in a match is very unlikely, so we just sum the
+        # likelihood from 3 to 9 goals.
+        probability = 0
+        for x in range(3, 9):
+            probability += self.__poisson_probability(average_xG_per_game, x)
+
+        return probability
 
     @property
     def xIn(self) -> float:
@@ -362,14 +392,15 @@ class Baller:
         return self.__populate_stat(expected_assists["TopLists"][0]["StatList"])
 
 
-def find_optimal_team(ballers, value_limit):
+def find_optimal_team(ballers: list[Baller], value_limit):
     # Create a linear programming problem
     problem = LpProblem("OptimalTeam", LpMaximize)
 
     # Create a dictionary to store the variables for each baller
     variables = {}
 
-    # Create a variable for each baller, with a lower bound of 0 and an upper bound of 1
+    # Create a variable for each baller, with a lower bound of 0 and an upper
+    # bound of 1
     for baller in ballers:
         variables[baller] = LpVariable(baller.name, 0, 1, LpInteger)
 
