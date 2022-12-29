@@ -53,7 +53,7 @@ class Baller:
     captain: bool = False
 
     similarity_threshold: float = 0.8
-    api_timeout: float = 5
+    api_timeout: float = 30
 
     fotmob: Union[None, dict] = field(init=False)
     team_all: Union[None, dict] = field(init=False)
@@ -321,7 +321,7 @@ class Baller:
 
         # Finance
         if self.captain:
-            growth += self.xGrowth * 2
+            growth += growth * 2
 
         return growth
 
