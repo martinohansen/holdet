@@ -30,6 +30,14 @@ url = "https://data.fotmob.com/stats/47/season/17664/clean_sheet_team.json"
 response = session.get(url)
 clean_sheet_team = response.json()
 
+url = "https://data.fotmob.com/stats/47/season/17664/red_card.json"
+response = session.get(url)
+red_cards = response.json()
+
+url = "https://data.fotmob.com/stats/47/season/17664/yellow_card.json"
+response = session.get(url)
+yellow_cards = response.json()
+
 url = "https://api.holdet.dk/tournaments/422?appid=holdet"
 response = session.get(url)
 tournament = response.json()
@@ -94,25 +102,13 @@ class Baller:
         return response.json()
 
     def __fotmob_match(self) -> Union[None, dict]:
-        team_match = False
         for term in [self.name, self.alt_name, self.last_name, self.first_name]:
             search = self.__search_fotmob(urllib.parse.quote(term))
             if search and search.get("squad"):
                 for player in search["squad"]["dataset"]:
-                    for name in [self.name, self.alt_name]:
-                        if self.__is_similar(self.team, player["teamName"]):
-                            team_match = True
-                            if self.__is_similar(name, player["name"], threshold=0.5):
-                                return player
+                    if self.__i_am(player["teamName"], player["name"]):
+                        return player
 
-        # Turns out we get a lot of players that dont even play in the league,
-        # so to not spam with false positive messages we only log if a team
-        # match was found
-        if team_match:
-            print(
-                "Unable to find fotmob match for:"
-                f" {self.name!r} / {self.alt_name!r} ({self.team})"
-            )
         return None
 
     @property
@@ -148,7 +144,7 @@ class Baller:
 
     def __populate_stat(self, stats) -> float:
         for stat in stats:
-            if self.__is_similar(self.name, stat["ParticipantName"]):
+            if self.__i_am(stat["TeamName"], stat["ParticipantName"]):
                 return stat["StatValue"]
         return 0
 
@@ -169,6 +165,14 @@ class Baller:
             return True
         else:
             return False
+
+    def __i_am(self, team: str, name: str) -> bool:
+        """Tries to determine if self is the same as team and name"""
+        for my_name in [self.name, self.alt_name]:
+            if self.__is_similar(self.team, team, threshold=0.8):
+                if self.__is_similar(my_name, name, threshold=0.5):
+                    return True
+        return False
 
     @property
     def keeper(self) -> bool:
@@ -294,6 +298,14 @@ class Baller:
         return self.__populate_stat_team(clean_sheet_team["TopLists"][0]["StatList"])
 
     @property
+    def yellow(self) -> float:
+        return self.__populate_stat(yellow_cards["TopLists"][0]["StatList"])
+
+    @property
+    def red(self) -> float:
+        return self.__populate_stat(red_cards["TopLists"][0]["StatList"])
+
+    @property
     def xGrowth(self) -> float:
         growth: float = 0
 
@@ -320,7 +332,8 @@ class Baller:
         growth += 60000 * self.xA
 
         # Fair play
-        # TODO: Add red and yellow cards to growth estimation
+        growth += 20000 * self.xYellow
+        growth += 50000 * self.xRed
 
         # Team performance
         growth += 25000 * self.xWin
@@ -408,6 +421,20 @@ class Baller:
     @property
     def xA(self) -> float:
         return self.__populate_stat(expected_assists["TopLists"][0]["StatList"])
+
+    @property
+    def xYellow(self) -> float:
+        if self.yellow != 0:
+            return self.participation_rate / self.yellow
+        else:
+            return 0
+
+    @property
+    def xRed(self) -> float:
+        if self.red != 0:
+            return self.participation_rate / self.red
+        else:
+            return 0
 
 
 def find_optimal_team(ballers: list[Baller], value_limit):
