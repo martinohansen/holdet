@@ -45,16 +45,15 @@ teams = response.json()
 
 @dataclass
 class Baller:
-    name: str
+    first_name: str
+    last_name: str
+    alt_name: str
     team: str
     value: int
     popularity: float
     trend: int
     position: int
     captain: bool = False
-
-    similarity_threshold: float = 0.8
-    api_timeout: float = 30
 
     fotmob: Union[None, dict] = field(init=False)
     team_all: Union[None, dict] = field(init=False)
@@ -87,20 +86,38 @@ class Baller:
             if self.__is_similar(self.team, team["name"]):
                 self.team_away = team
 
-    def __get_api(self, url) -> requests.Response:
-        return session.get(url, timeout=self.api_timeout)
+    def __get_api(self, url, timeout: float = 30) -> requests.Response:
+        return session.get(url, timeout=timeout)
 
     def __search_fotmob(self, term: str) -> dict:
         response = self.__get_api(f"https://www.fotmob.com/api/searchData?term={term}")
         return response.json()
 
     def __fotmob_match(self) -> Union[None, dict]:
-        search = self.__search_fotmob(urllib.parse.quote(self.name))
-        if search.get("squad"):
-            for player in search["squad"]["dataset"]:
-                if self.__is_similar(self.name, player["name"]):
-                    return player
+        team_match = False
+        for term in [self.name, self.alt_name, self.last_name, self.first_name]:
+            search = self.__search_fotmob(urllib.parse.quote(term))
+            if search and search.get("squad"):
+                for player in search["squad"]["dataset"]:
+                    for name in [self.name, self.alt_name]:
+                        if self.__is_similar(self.team, player["teamName"]):
+                            team_match = True
+                            if self.__is_similar(name, player["name"], threshold=0.5):
+                                return player
+
+        # Turns out we get a lot of players that dont even play in the league,
+        # so to not spam with false positive messages we only log if a team
+        # match was found
+        if team_match:
+            print(
+                "Unable to find fotmob match for:"
+                f" {self.name!r} / {self.alt_name!r} ({self.team})"
+            )
         return None
+
+    @property
+    def name(self) -> str:
+        return self.first_name + " " + self.last_name
 
     def __hash__(self):
         return hash(tuple(self.name))
@@ -145,10 +162,10 @@ class Baller:
         """Returns the similarity between a and b in percent 0-1"""
         return SequenceMatcher(None, a, b).ratio()
 
-    def __is_similar(self, a: str, b: str) -> bool:
+    def __is_similar(self, a: str, b: str, threshold: float = 0.8) -> bool:
         """Returns a bool if a and b is within the similarity threshold"""
         similarity = self.__similarity(a, b)
-        if similarity > self.similarity_threshold:
+        if similarity > threshold:
             return True
         else:
             return False
@@ -478,7 +495,9 @@ def init_baller(player: dict, game: dict, tournament: dict) -> Baller:
     )
 
     return Baller(
-        name=person["firstname"] + " " + person["lastname"],
+        first_name=person["firstname"],
+        last_name=person["lastname"],
+        alt_name=person["slug"].replace("_", " "),
         value=character["values"]["value"],
         popularity=character["values"]["popularity"],
         trend=character["values"]["trend"],
