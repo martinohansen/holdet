@@ -10,7 +10,15 @@ from difflib import SequenceMatcher
 from typing import Union
 
 import requests
-from pulp import LpInteger, LpMaximize, LpProblem, LpVariable, value  # type: ignore
+from pulp import (  # type: ignore
+    PULP_CBC_CMD,
+    LpInteger,
+    LpMaximize,
+    LpProblem,
+    LpVariable,
+    value,
+)
+from tqdm import tqdm  # type: ignore
 
 session = requests.Session()
 
@@ -491,7 +499,7 @@ def find_optimal_team(ballers: list[Baller], value_limit):
     problem += sum(variables[b] for b in ballers if b.forward) <= 3
 
     # Solve the problem
-    problem.solve()
+    problem.solve(PULP_CBC_CMD(msg=0))
 
     # Initialize an empty list to store the optimal team
     optimal_team = []
@@ -533,6 +541,38 @@ def init_baller(player: dict, game: dict, tournament: dict) -> Baller:
     )
 
 
+def levenshtein_distance(s1, s2):
+    # Implement the Levenshtein distance algorithm here
+    # See https://en.wikipedia.org/wiki/Levenshtein_distance for more information
+    m = len(s1)
+    n = len(s2)
+    d = [[0 for j in range(n + 1)] for i in range(m + 1)]
+    for i in range(1, m + 1):
+        d[i][0] = i
+    for j in range(1, n + 1):
+        d[0][j] = j
+    for j in range(1, n + 1):
+        for i in range(1, m + 1):
+            if s1[i - 1] == s2[j - 1]:
+                cost = 0
+            else:
+                cost = 1
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+    return d[m][n]
+
+
+def get_closest_match(name, choices):
+    # Find the player name with the smallest Levenshtein distance
+    closest_match = None
+    min_distance = float("inf")
+    for choice in choices:
+        distance = levenshtein_distance(name, choice)
+        if distance < min_distance:
+            closest_match = choice
+            min_distance = distance
+    return closest_match
+
+
 def debugger(type, value, tb):
     if hasattr(sys, "ps1") or not sys.stderr.isatty():
         # we are in interactive mode or we don't have a tty-like
@@ -570,13 +610,17 @@ if __name__ == "__main__":
         ]
 
         # Iterate over the results and append the ballers to the ballers list
-        for result in concurrent.futures.as_completed(results):
+        for result in tqdm(
+            concurrent.futures.as_completed(results),
+            total=len(results),
+            bar_format="{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} players",
+        ):
             baller = result.result()
             # Only append baller if they have value and at least 2% popularity
             if baller.value != 0 and baller.popularity > 0.02:
                 ballers.append(baller)
 
-    solution: list[Baller] = find_optimal_team(ballers, 50000000)
+    solution: list[Baller] = find_optimal_team(ballers, 50100000)
 
     team_by_position: dict[str, list[Baller]] = {
         "keepers": [],
@@ -594,6 +638,7 @@ if __name__ == "__main__":
         if player.forward:
             team_by_position["forwards"].append(player)
 
+    print()
     for position, players in team_by_position.items():
         print(f"# {position.title()} ({len(players)})")
         for player in players:
@@ -603,5 +648,28 @@ if __name__ == "__main__":
         f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, total"
         f" expected growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M, average"
         f" popularity = {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
-        f" players considered: {len(ballers)}"
+        f" players considered: {len(ballers)}\n"
     )
+
+    while True:
+        player_name = input(
+            "Enter the name of a player to inspect in detail (or enter 'q' to quit): "
+        )
+        if player_name == "q":
+            break
+        player_found: Union[None, Baller] = None
+        # Get a list of all player names
+        player_names = [p.name for p in ballers]
+        # Find the player with the closest matching name
+        closest_match = get_closest_match(player_name, player_names)
+        if closest_match:
+            # Find the player with the closest matching name
+            for p in ballers:
+                if p.name == closest_match:
+                    player_found = p
+                    break
+            if player_found is not None:
+                print(f"Player details for {player_found.name}:")
+                print(player_found)
+        else:
+            print(f"No player found with name {player_name!r}")
