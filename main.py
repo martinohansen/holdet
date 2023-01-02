@@ -65,18 +65,6 @@ class Odds:
     Draw: float
     Away: float
 
-    @property
-    def Total(self) -> float:
-        return self.Home + self.Draw + self.Away
-
-    @property
-    def HomeProbability(self) -> float:
-        return self.Home / self.Total
-
-    @property
-    def AwayProbability(self) -> float:
-        return self.Away / self.Total
-
 
 @dataclass
 class Match:
@@ -155,7 +143,8 @@ class Baller:
                 home: str = match["home"]["name"]
                 away: str = match["away"]["name"]
                 for team in [home, away]:
-                    if self.__is_similar(self.team, team, threshold=0.9):
+                    # TODO: Move to map for all team lookups
+                    if self.__is_similar(self.team, team, threshold=0.5):
                         odds = self.__odds(int(match["id"]))
                         return Match(
                             home,
@@ -224,7 +213,7 @@ class Baller:
     def __i_am(self, team: str, name: str) -> bool:
         """Tries to determine if self is the same as team and name"""
         for my_name in [self.name, self.alt_name]:
-            if self.__is_similar(self.team, team, threshold=0.8):
+            if self.__is_similar(self.team, team, threshold=0.5):
                 if self.__is_similar(my_name, name, threshold=0.5):
                     return True
         return False
@@ -434,7 +423,7 @@ class Baller:
 
     @property
     def xGrowthRound(self) -> float:
-        weight: float = 0.25
+        weight: float = 0.5
         growth = 0.0
 
         if self.total_games != 0 and self.next_match is not None:
@@ -447,14 +436,26 @@ class Baller:
 
         return growth
 
+    def __get_match_side(
+        self, match: Match, threshold: float = 0.5
+    ) -> Union[None, str]:
+        home_score = self.__similarity(self.team, match.Home)
+        away_score = self.__similarity(self.team, match.Away)
+
+        if home_score >= threshold and home_score > away_score:
+            return "Home"
+        elif away_score >= threshold and away_score > home_score:
+            return "Away"
+        return None
+
     @property
     def __win_probability(self) -> float:
         if self.next_match:
-            odds = self.next_match.Odds
-            if self.__is_similar(self.team, self.next_match.Home, threshold=0.9):
-                return odds.HomeProbability
-            if self.__is_similar(self.team, self.next_match.Away, threshold=0.9):
-                return odds.AwayProbability
+            match_side = self.__get_match_side(self.next_match)
+            if match_side == "Home":
+                return 1 / self.next_match.Odds.Home
+            elif match_side == "Away":
+                return 1 / self.next_match.Odds.Away
         return 0.0
 
     def __poisson_probability(self, lambda_, x):
@@ -670,32 +671,20 @@ def get_closest_match(name, choices):
     return closest_match
 
 
-def debugger(type, value, tb):
-    if hasattr(sys, "ps1") or not sys.stderr.isatty():
-        # we are in interactive mode or we don't have a tty-like
-        # device, so we call the default hook
-        sys.__excepthook__(type, value, tb)
-    else:
-        import pdb
-        import traceback
-
-        # we are NOT in interactive mode, print the exception...
-        traceback.print_exception(type, value, tb)
-        print
-        # ...then start the debugger in post-mortem mode.
-        pdb.post_mortem(tb)
-
-
 if __name__ == "__main__":
-    sys.excepthook = debugger
-
     ballers: list[Baller] = []
 
-    # Find all players in the tournament who have a character in the game
+    # Find all players in the tournament who have a character in the game and a
+    # popularity of 0.5% or more, this is done to remove players that dont even
+    # play in the league anymore.
     tournament_players = [
         player
         for player in tournament["players"]
-        if any(character["player"]["id"] == player["id"] for character in game)
+        if any(
+            character["player"]["id"] == player["id"]
+            and character["values"]["popularity"] >= 0.005
+            for character in game
+        )
     ]
 
     # Use a ThreadPoolExecutor to run the init_baller function concurrently
@@ -713,9 +702,7 @@ if __name__ == "__main__":
             bar_format="{percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} players",
         ):
             baller = result.result()
-            # Only append baller if they have value and at least 2% popularity
-            if baller.value != 0 and baller.popularity > 0.02:
-                ballers.append(baller)
+            ballers.append(baller)
 
     budget = 50000000
     if len(sys.argv) > 1:
@@ -747,10 +734,11 @@ if __name__ == "__main__":
         print()
     print(
         f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, expected"
-        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total / "
+        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
         f" {sum(p.xGrowthRound for p in solution) / 1000:.0f}K next round, average"
-        f" popularity = {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
-        f" players considered: {len(ballers)}\n"
+        f" popularity: {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
+        f" players considered: {len(ballers)}, fotmob matches:"
+        f" {sum(1 for p in ballers if isinstance(p.fotmob, dict))}\n"
     )
 
     while True:
