@@ -155,7 +155,7 @@ class Baller:
                 home: str = match["home"]["name"]
                 away: str = match["away"]["name"]
                 for team in [home, away]:
-                    if self.__is_similar(self.team, team, threshold=1.0):
+                    if self.__is_similar(self.team, team, threshold=0.9):
                         odds = self.__odds(int(match["id"]))
                         return Match(
                             home,
@@ -434,19 +434,28 @@ class Baller:
 
     @property
     def xGrowthRound(self) -> float:
-        if self.total_games != 0:
-            growth = self.xGrowth / self.total_games
-        else:
-            growth = 0
+        weight: float = 0.25
+        growth = 0.0
 
-        if self.next_match:
-            odds = self.next_match.Odds
-            if self.__is_similar(self.team, self.next_match.Home, threshold=1.0):
-                growth = growth * odds.HomeProbability
-            if self.__is_similar(self.team, self.next_match.Away, threshold=1.0):
-                growth = growth * odds.AwayProbability
+        if self.total_games != 0 and self.next_match is not None:
+            per_round = self.xGrowth / self.total_games
+            next_round = per_round * self.__win_probability
+            round_weight = weight
+            stats_weight = 1 - round_weight
+
+            growth = (per_round * stats_weight) + (next_round * round_weight)
 
         return growth
+
+    @property
+    def __win_probability(self) -> float:
+        if self.next_match:
+            odds = self.next_match.Odds
+            if self.__is_similar(self.team, self.next_match.Home, threshold=0.9):
+                return odds.HomeProbability
+            if self.__is_similar(self.team, self.next_match.Away, threshold=0.9):
+                return odds.AwayProbability
+        return 0.0
 
     def __poisson_probability(self, lambda_, x):
         return (math.exp(-lambda_) * lambda_**x) / math.factorial(x)
@@ -738,7 +747,7 @@ if __name__ == "__main__":
         print()
     print(
         f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, expected"
-        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total"
+        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total / "
         f" {sum(p.xGrowthRound for p in solution) / 1000:.0f}K next round, average"
         f" popularity = {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
         f" players considered: {len(ballers)}\n"
