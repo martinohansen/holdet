@@ -88,10 +88,25 @@ class Baller:
 
     fotmob: Union[None, dict] = field(init=False)
     next_match: Union[None, Match] = field(init=False)
+    table_all: Union[None, dict] = field(init=False)
+    table_home: Union[None, dict] = field(init=False)
+    table_away: Union[None, dict] = field(init=False)
 
     def __post_init__(self):
         self.fotmob = self.__player()
         self.next_match = self.__next_match()
+
+        self.table_all = self.__find_team_in_table(
+            league["table"][0]["data"]["table"]["all"]
+        )
+
+        self.table_home = self.__find_team_in_table(
+            league["table"][0]["data"]["table"]["home"]
+        )
+
+        self.table_away = self.__find_team_in_table(
+            league["table"][0]["data"]["table"]["away"]
+        )
 
     def __get_api(self, url, timeout: float = 30) -> requests.Response:
         return session.get(url, timeout=timeout)
@@ -118,6 +133,7 @@ class Baller:
                 f"https://www.fotmob.com/api/playerData?id={fotmob_id}"
             )
             return response.json()
+        print(f"Unable to find fotmob match for {self.name} ({self.team})")
         return None
 
     def __odds(self, id: int) -> Odds:
@@ -133,26 +149,51 @@ class Baller:
         )
 
     def __next_match(self) -> Union[None, Match]:
+        """
+        Find the most likely match the team is playing in the round by using
+        the lowest levenshtein distance between the teams in the matches and the
+        ballers team
+        """
         matches = league["matches"]
         next_round: int = matches["firstUnplayedMatch"]["firstRoundWithUnplayedMatch"]
-        next_match_index: int = matches["firstUnplayedMatch"]["firstUnplayedMatchIndex"]
 
-        for match in matches["data"]["allMatches"][next_match_index:]:
+        closest_match = None
+        max_similarity = 0.5
+        for match in matches["data"]["allMatches"]:
             match_round: int = match["round"]
             if match_round == next_round:
                 home: str = match["home"]["name"]
                 away: str = match["away"]["name"]
                 for team in [home, away]:
-                    # TODO: Move to map for all team lookups
-                    if self.__is_similar(self.team, team, threshold=0.5):
+                    similarity = self.__similarity(self.team, team)
+                    if similarity > max_similarity:
+                        max_similarity = similarity
                         odds = self.__odds(int(match["id"]))
-                        return Match(
+                        closest_match = Match(
                             home,
                             away,
                             Odds=odds,
                             Round=match_round,
                         )
-        return None
+
+        if closest_match is None:
+            print(f"Unable to find next match for {self.name} ({self.team})")
+
+        return closest_match
+
+    def __find_team_in_table(self, teams: list) -> Union[None, dict]:
+        closest_team = None
+        max_similarity = 0.5
+        for team in teams:
+            similarity = self.__similarity(self.team, team["name"])
+            if similarity > max_similarity:
+                max_similarity = similarity
+                closest_team = team
+
+        if closest_team is None:
+            print(f"Unable to find team table for {self.name} ({self.team})")
+
+        return closest_team
 
     @property
     def name(self) -> str:
@@ -183,6 +224,7 @@ class Baller:
             f" popularity={self.popularity * 100:.1f}%,"
             f" xGrowth={self.xGrowth / 1000000:.3f}M,"
             f" xGrowthRound={self.xGrowthRound / 1000:.0f}K,"
+            f" xWinProbability={self.xWinProbability * 100:.0f}%,"
             f" captain={self.captain!r}, {fotmob=!r})"
         )
 
@@ -217,27 +259,6 @@ class Baller:
                 if self.__is_similar(my_name, name, threshold=0.5):
                     return True
         return False
-
-    @property
-    def table_all(self) -> Union[None, dict]:
-        for team in league["table"][0]["data"]["table"]["all"]:
-            if self.__is_similar(self.team, team["name"]):
-                return team
-        return None
-
-    @property
-    def table_home(self) -> Union[None, dict]:
-        for team in league["table"][0]["data"]["table"]["home"]:
-            if self.__is_similar(self.team, team["name"]):
-                return team
-        return None
-
-    @property
-    def table_away(self) -> Union[None, dict]:
-        for team in league["table"][0]["data"]["table"]["away"]:
-            if self.__is_similar(self.team, team["name"]):
-                return team
-        return None
 
     @property
     def keeper(self) -> bool:
@@ -428,28 +449,25 @@ class Baller:
 
         if self.total_games != 0 and self.next_match is not None:
             per_round = self.xGrowth / self.total_games
-            next_round = per_round * self.__win_probability
+            next_round = per_round * self.xWinProbability
             round_weight = weight
             stats_weight = 1 - round_weight
 
             growth = (per_round * stats_weight) + (next_round * round_weight)
-
         return growth
 
-    def __get_match_side(
-        self, match: Match, threshold: float = 0.5
-    ) -> Union[None, str]:
+    def __get_match_side(self, match: Match) -> Union[None, str]:
         home_score = self.__similarity(self.team, match.Home)
         away_score = self.__similarity(self.team, match.Away)
 
-        if home_score >= threshold and home_score > away_score:
+        if home_score > away_score:
             return "Home"
-        elif away_score >= threshold and away_score > home_score:
+        elif away_score > home_score:
             return "Away"
         return None
 
     @property
-    def __win_probability(self) -> float:
+    def xWinProbability(self) -> float:
         if self.next_match:
             match_side = self.__get_match_side(self.next_match)
             if match_side == "Home":
