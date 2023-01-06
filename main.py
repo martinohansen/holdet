@@ -50,7 +50,7 @@ url = "https://api.holdet.dk/tournaments/422?appid=holdet"
 response = session.get(url)
 tournament = response.json()
 
-url = "https://api.holdet.dk/games/644/rounds/1/statistics?appid=holdet"
+url = "https://api.holdet.dk/games/644/rounds/3/statistics?appid=holdet"
 response = session.get(url)
 game = response.json()
 
@@ -142,11 +142,15 @@ class Baller:
         response = self.__get_api(url)
         match = response.json()
 
-        return Odds(
-            Home=float(match["coefficients"][0][1]),
-            Draw=float(match["coefficients"][1][1]),
-            Away=float(match["coefficients"][2][1]),
-        )
+        if match.get("coefficients"):
+            return Odds(
+                Home=float(match["coefficients"][0][1]),
+                Draw=float(match["coefficients"][1][1]),
+                Away=float(match["coefficients"][2][1]),
+            )
+        else:
+            print(f"Match have no odds yet: {url=!r} {match=!r} ({self.name!r})")
+            return Odds(0, 0, 0)
 
     def __next_match(self) -> Union[None, Match]:
         """
@@ -155,11 +159,12 @@ class Baller:
         ballers team
         """
         matches = league["matches"]
-        next_round: int = matches["firstUnplayedMatch"]["firstRoundWithUnplayedMatch"]
+        next_round: int = 20
+        start_index: int = matches["firstUnplayedMatch"]["firstUnplayedMatchIndex"]
 
         closest_match = None
         max_similarity = 0.5
-        for match in matches["data"]["allMatches"]:
+        for match in matches["data"]["allMatches"][start_index:]:
             match_round: int = match["round"]
             if match_round == next_round:
                 home: str = match["home"]["name"]
@@ -199,6 +204,15 @@ class Baller:
     def name(self) -> str:
         return self.first_name + " " + self.last_name
 
+    @property
+    def stats(self) -> str:
+        return (
+            f"Stats(xG={self.xG!r}, xA={self.xA!r}, xCS={self.xCS!r},"
+            f" xWin={self.xWin!r}, xDraw={self.xDraw!r}, xLoss={self.xLoss!r},"
+            f" xIn={self.xIn!r}, xOut={self.xOut!r}, xYellow={self.xYellow!r},"
+            f" xRed={self.xRed!r})"
+        )
+
     def __hash__(self):
         return hash(tuple(self.name))
 
@@ -229,16 +243,25 @@ class Baller:
         )
 
     def __populate_stat(self, stats) -> float:
-        for stat in stats:
-            if self.__i_am(stat["TeamName"], stat["ParticipantName"]):
-                return stat["StatValue"]
+        if self.fotmob:
+            for stat in stats:
+                if stat["ParticiantId"] == self.fotmob["id"]:
+                    return stat["StatValue"]
         return 0
 
     def __populate_stat_team(self, stats) -> float:
+        closest_team = None
+        max_similarity = 0.5
         for stat in stats:
-            if self.__is_similar(self.team, stat["ParticipantName"]):
-                return stat["StatValue"]
-        return 0
+            similarity = self.__similarity(self.team, stat["ParticipantName"])
+            if similarity > max_similarity:
+                max_similarity = similarity
+                closest_team = stat["StatValue"]
+        if closest_team is None:
+            print(f"Unable to find team in stat for {self.name} ({self.team})")
+            return 0
+        else:
+            return closest_team
 
     def __similarity(self, a: str, b: str) -> float:
         """Returns the similarity between a and b in percent 0-1"""
@@ -256,7 +279,7 @@ class Baller:
         """Tries to determine if self is the same as team and name"""
         for my_name in [self.name, self.alt_name]:
             if self.__is_similar(self.team, team, threshold=0.5):
-                if self.__is_similar(my_name, name, threshold=0.5):
+                if self.__is_similar(my_name, name, threshold=0.6):
                     return True
         return False
 
@@ -726,7 +749,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         budget = int(sys.argv[1])
 
-    solution: list[Baller] = find_optimal_team(ballers, 50100000)
+    solution: list[Baller] = find_optimal_team(ballers, budget)
 
     team_by_position: dict[str, list[Baller]] = {
         "keepers": [],
@@ -779,5 +802,7 @@ if __name__ == "__main__":
             if player_found is not None:
                 print(player_found)
                 print(player_found.next_match)
+                print(player_found.stats)
+                print()
         else:
             print(f"No player found with name {player_name!r}")
