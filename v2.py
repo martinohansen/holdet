@@ -8,15 +8,30 @@ import requests
 from tqdm import tqdm  # type: ignore
 
 
-class Fotmob:
+class App:
     def __init__(self) -> None:
         self.session = requests.Session()
-        self.logger = logging.Logger("fotmob")
+        self.logger = logging.Logger("App")
+
+        self.league_id: int = 47
+        self.season_id: int = 879290
 
     class Error(Exception):
         pass
 
-    def repr_string(self, obj, exclude=["session", "logger"]) -> str:
+    def __repr__(self) -> str:
+        return self.repr_string(self)
+
+    def repr_string(
+        self,
+        obj,
+        exclude: list[str] = [
+            "session",
+            "logger",
+            "league_id",
+            "season_id",
+        ],
+    ) -> str:
         attrs = []
         for attr, value in obj.__dict__.items():
             if attr not in exclude:
@@ -24,7 +39,7 @@ class Fotmob:
         return f"{obj.__class__.__name__}({', '.join(attrs)})"
 
 
-class CareerStats(Fotmob):
+class CareerStats(App):
     def __init__(self, stats: list) -> None:
         super().__init__()
 
@@ -33,11 +48,8 @@ class CareerStats(Fotmob):
             for stat in stats:
                 self.leagues.append(LeagueStats(stat))
 
-    def __repr__(self) -> str:
-        return super().repr_string(self)
 
-
-class LeagueStats(Fotmob):
+class LeagueStats(App):
     def __init__(self, stats: dict) -> None:
         super().__init__()
 
@@ -56,11 +68,8 @@ class LeagueStats(Fotmob):
         for stat in stats["seasons"]:
             self.seasons.append(SeasonStats(stat))
 
-    def __repr__(self) -> str:
-        return super().repr_string(self)
 
-
-class SeasonStats(Fotmob):
+class SeasonStats(App):
     def __init__(self, stats: dict) -> None:
         super().__init__()
 
@@ -99,23 +108,34 @@ class SeasonStats(Fotmob):
         return super().repr_string(self)
 
 
-class Player(Fotmob):
+class Player(App):
     def __init__(self, id: int) -> None:
         super().__init__()
 
         resp = self.session.get(f"https://www.fotmob.com/api/playerData?id={id}")
         self.__player = resp.json()
 
+        # Reduce memory usage, we dont have any need for match data and it
+        # accounts for around 60% of the dict so lets drop it.
+        del self.__player["recentMatches"]
+
         self.id = id
         self.name: str = self.__player["name"]
 
-        self.stats: CareerStats = CareerStats(self.__player["careerStatistics"])
+        self.career_stats: CareerStats = CareerStats(self.__player["careerStatistics"])
+
+        self.current_season = None
+        for league in self.career_stats.leagues:
+            if league.id == self.league_id:
+                for season in league.seasons:
+                    if season.id == self.season_id:
+                        self.current_season = season
 
     def __repr__(self) -> str:
         id = self.id
         name = self.name
-        stats = self.stats
-        return f"Player({id=!r}, {name=!r}, {stats=!r}"
+        current_season = self.current_season
+        return f"Player({id=!r}, {name=!r}, {current_season=!r}"
 
     @property
     def market_value(self) -> int:
@@ -132,7 +152,7 @@ class Player(Fotmob):
             return False
 
 
-class Team(Fotmob):
+class Team(App):
     def __init__(self, id: int) -> None:
         super().__init__()
 
@@ -142,27 +162,45 @@ class Team(Fotmob):
 
         self.id = id
         self.name: str = team["details"]["name"]
+
+        tables = team["history"]["historicalTableData"]["ranks"]
+        for table in tables:
+            if table["stageId"] == self.season_id:
+                stats = table["stats"]
+                self.points: int = stats["points"]
+                self.wins: int = stats["wins"]
+                self.draws: int = stats["draws"]
+                self.loss: int = stats["loss"]
+
+        if self.wins == 0 and self.draws == 0 and self.loss == 0:
+            raise self.Error("No matches have been played in the season yet")
+
         self.players: list[Player] = []
         for position in squad[1:]:  # Index 0 is the coach
             for player in position[1]:  # Index 0 is position name
                 self.players.append(Player(player["id"]))
 
+        self.clean_sheets = sum(
+            player.current_season.clean_sheets
+            for player in self.players
+            if player.current_season
+        )
+
     def __repr__(self) -> str:
-        id = self.id
-        name = self.name
-        players = self.players
-        return f"Team({id=!r}, {name=!r}, {players=!r}"
+        return self.repr_string(self, exclude=["players"])
 
 
-class League(Fotmob):
-    def __init__(self, id: int = 47) -> None:
+class League(App):
+    def __init__(self) -> None:
         super().__init__()
 
-        resp = self.session.get(f"https://www.fotmob.com/api/leagues?id={id}")
+        resp = self.session.get(
+            f"https://www.fotmob.com/api/leagues?id={self.league_id}"
+        )
         league = resp.json()
         teams = league["table"][0]["data"]["table"]["all"]
 
-        self.id = id
+        self.id = league["details"]["id"]
         self.name = league["details"]["name"]
 
         self.teams: list[Team] = []
@@ -186,5 +224,4 @@ p = League()
 print(f"Teams: {len(p.teams)}, Players: { sum(len(team.players) for team in p.teams)}")
 
 for team in p.teams[:1]:
-    for player in team.players[:1]:
-        print(player)
+    print(team)
