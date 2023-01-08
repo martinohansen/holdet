@@ -7,6 +7,10 @@ version = "0.1.0"
 description = ""
 authors = ["Martin Hansen <dontbeevilpls@gmail.com>"]
 readme = "README.md"
+packages =  [
+    {include = "holdet"},
+    {include = "fotmob"},
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
