@@ -109,7 +109,7 @@ class SeasonStats(App):
 
 
 class Player(App):
-    def __init__(self, id: int) -> None:
+    def __init__(self, id: int, team: str) -> None:
         super().__init__()
 
         resp = self.session.get(f"https://www.fotmob.com/api/playerData?id={id}")
@@ -120,6 +120,7 @@ class Player(App):
         del self.__player["recentMatches"]
 
         self.id = id
+        self.team = team
         self.name: str = self.__player["name"]
 
         self.career_stats: CareerStats = CareerStats(self.__player["careerStatistics"])
@@ -131,11 +132,14 @@ class Player(App):
                     if season.id == self.season_id:
                         self.current_season = season
 
+        self.character = HOLDET.find_closest_character(self.team, self.name)
+
     def __repr__(self) -> str:
         id = self.id
         name = self.name
+        holdet = self.character
         current_season = self.current_season
-        return f"Player({id=!r}, {name=!r}, {current_season=!r}"
+        return f"Player({id=!r}, {name=!r}, {holdet=!r}, {current_season=!r}"
 
     @property
     def market_value(self) -> int:
@@ -178,7 +182,7 @@ class Team(App):
         self.players: list[Player] = []
         for position in squad[1:]:  # Index 0 is the coach
             for player in position[1]:  # Index 0 is position name
-                self.players.append(Player(player["id"]))
+                self.players.append(Player(player["id"], self.name))
 
         self.clean_sheets = sum(
             player.current_season.clean_sheets
@@ -220,8 +224,139 @@ class League(App):
         return f"League({id=!r}, {name=!r}, {teams=!r})"
 
 
+class Character(App):
+    def __init__(
+        self,
+        name: str,
+        value: int,
+        popularity: float,
+        trend: int,
+        position: int,
+        team: str,
+    ) -> None:
+        self.name = name
+        self.value = value
+        self.popularity = popularity
+        self.trend = trend
+        self.position = position
+        self.team = team
+
+
+class Holdet(App):
+    def __init__(
+        self,
+        tournament_id: int = 422,
+        game_id: int = 644,
+        game_round: int = 3,
+    ) -> None:
+        super().__init__()
+
+        __params: str = "?appid=holdet"
+
+        url = f"https://api.holdet.dk/tournaments/{tournament_id}{__params}"
+        tournament = self.session.get(url).json()
+
+        url = f"https://api.holdet.dk/games/{game_id}/rounds/{game_round}/statistics{__params}"
+        game = self.session.get(url).json()
+
+        self.__characters: list[Character] = self.__get_characters(tournament, game)
+
+    def __get_characters(self, tournament, game) -> list[Character]:
+        characters: list[Character] = []
+
+        tournament_players = [
+            player
+            for player in tournament["players"]
+            if any(character["player"]["id"] == player["id"] for character in game)
+        ]
+
+        for player in tournament_players:
+            # Find the team in the tournament that the player belongs to
+            team = next(
+                t for t in tournament["teams"] if t["id"] == player["team"]["id"]
+            )
+
+            # Find the character for the player in the game
+            character = next(
+                character
+                for character in game
+                if character["player"]["id"] == player["id"]
+            )
+
+            # Find the person for the player in the tournament
+            person = next(
+                person
+                for person in tournament["persons"]
+                if person["id"] == player["person"]["id"]
+            )
+
+            characters.append(
+                Character(
+                    name=person["firstname"] + " " + person["lastname"],
+                    value=character["values"]["value"],
+                    popularity=character["values"]["popularity"],
+                    trend=character["values"]["trend"],
+                    position=player["position"]["id"],
+                    team=team["name"],
+                )
+            )
+        return characters
+
+    def __jaccard_similarity(self, str1: str, str2: str) -> float:
+        # Convert the strings to sets of characters
+        set1 = set(str1)
+        set2 = set(str2)
+
+        # Calculate the size of the intersection of the sets
+        intersection = set1 & set2
+        intersection_size = len(intersection)
+
+        # Calculate the size of the union of the sets
+        union = set1 | set2
+        union_size = len(union)
+
+        # Calculate the Jaccard similarity
+        similarity = intersection_size / union_size
+
+        return similarity
+
+    def find_closest_character(self, team_name: str, player_name: str):
+        # Initialize a variable to store the maximum similarity
+        max_similarity = 0.0
+
+        # Initialize a variable to store the closest match
+        closest_match_idx = None
+
+        # Iterate over the players in the list
+        for character in self.__characters:
+            # Calculate the Jaccard similarity between the team name and the
+            # character's team name
+            team_similarity = self.__jaccard_similarity(team_name, character.team)
+
+            # Calculate the Jaccard similarity between the character name and the
+            # character's name
+            name_similarity = self.__jaccard_similarity(player_name, character.name)
+
+            # Calculate the overall similarity as the average of the team and
+            # name similarities
+            overall_similarity = (team_similarity + name_similarity) / 2
+
+            # If the overall similarity is greater than the maximum similarity,
+            # update the closest match
+            if overall_similarity > max_similarity:
+                max_similarity = overall_similarity
+                closest_match_idx = self.__characters.index(character)
+
+        return self.__characters.pop(closest_match_idx)  #  type: ignore
+
+
+HOLDET = Holdet()
+
+
 p = League()
 print(f"Teams: {len(p.teams)}, Players: { sum(len(team.players) for team in p.teams)}")
 
 for team in p.teams[:1]:
     print(team)
+    for player in team.players[:2]:
+        print(player)
