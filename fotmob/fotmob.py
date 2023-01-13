@@ -134,7 +134,7 @@ class Player(App):
         id = self.id
         name = self.name
         current_season = self.current_season
-        return f"Player({id=!r}, {name=!r}, {current_season=!r}"
+        return f"Player({id=!r}, {name=!r}, {current_season=!r})"
 
     @property
     def market_value(self) -> int:

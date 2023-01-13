@@ -39,6 +39,8 @@ class Character(App):
         self,
         name: str,
         value: int,
+        growth: int,
+        totalGrowth: int,
         popularity: float,
         trend: int,
         position: int,
@@ -46,6 +48,8 @@ class Character(App):
     ) -> None:
         self.name = name
         self.value = value
+        self.growth = growth
+        self.totalGrowth = totalGrowth
         self.popularity = popularity
         self.trend = trend
         self.position = position
@@ -76,7 +80,7 @@ class Character(App):
         return False
 
 
-class Holdet(App):
+class Game(App):
     def __init__(
         self,
         tournament_id: int = 422,
@@ -127,6 +131,8 @@ class Holdet(App):
             characters.append(
                 Character(
                     name=person["firstname"] + " " + person["lastname"],
+                    growth=character["values"]["growth"],
+                    totalGrowth=character["values"]["totalGrowth"],
                     value=character["values"]["value"],
                     popularity=character["values"]["popularity"],
                     trend=character["values"]["trend"],
