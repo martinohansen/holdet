@@ -159,7 +159,7 @@ class Baller:
         ballers team
         """
         matches = league["matches"]
-        next_round: int = 20
+        next_round: int = 21
         start_index: int = matches["firstUnplayedMatch"]["firstUnplayedMatchIndex"]
 
         closest_match = None
@@ -712,6 +712,41 @@ def get_closest_match(name, choices):
     return closest_match
 
 
+def print_solution(ballers: list[Baller], budget: int):
+    solution: list[Baller] = find_optimal_team(ballers, budget)
+
+    team_by_position: dict[str, list[Baller]] = {
+        "keepers": [],
+        "defenses": [],
+        "midfielders": [],
+        "forwards": [],
+    }
+    for player in solution:
+        if player.keeper:
+            team_by_position["keepers"].append(player)
+        if player.defense:
+            team_by_position["defenses"].append(player)
+        if player.midfielder:
+            team_by_position["midfielders"].append(player)
+        if player.forward:
+            team_by_position["forwards"].append(player)
+
+    print()
+    for position, players in team_by_position.items():
+        print(f"# {position.title()} ({len(players)})")
+        for player in players:
+            print(player)
+        print()
+    print(
+        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, expected"
+        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
+        f" {sum(p.xGrowthRound for p in solution) / 1000:.0f}K next round, average"
+        f" popularity: {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
+        f" players considered: {len(ballers)}, fotmob matches:"
+        f" {sum(1 for p in ballers if isinstance(p.fotmob, dict))}\n"
+    )
+
+
 if __name__ == "__main__":
     ballers: list[Baller] = []
 
@@ -749,60 +784,35 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         budget = int(sys.argv[1])
 
-    solution: list[Baller] = find_optimal_team(ballers, budget)
-
-    team_by_position: dict[str, list[Baller]] = {
-        "keepers": [],
-        "defenses": [],
-        "midfielders": [],
-        "forwards": [],
-    }
-    for player in solution:
-        if player.keeper:
-            team_by_position["keepers"].append(player)
-        if player.defense:
-            team_by_position["defenses"].append(player)
-        if player.midfielder:
-            team_by_position["midfielders"].append(player)
-        if player.forward:
-            team_by_position["forwards"].append(player)
-
-    print()
-    for position, players in team_by_position.items():
-        print(f"# {position.title()} ({len(players)})")
-        for player in players:
-            print(player)
-        print()
-    print(
-        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, expected"
-        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
-        f" {sum(p.xGrowthRound for p in solution) / 1000:.0f}K next round, average"
-        f" popularity: {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
-        f" players considered: {len(ballers)}, fotmob matches:"
-        f" {sum(1 for p in ballers if isinstance(p.fotmob, dict))}\n"
-    )
+    print_solution(ballers, budget)
 
     while True:
-        player_name = input(
-            "Enter the name of a player to inspect in detail (or enter 'q' to quit): "
+        input_value = input(
+            "Valid options are:\n"
+            " 'q' to quit\n"
+            " 'b' to change budget value\n"
+            "  Any player name to inspect\n\n"
+            "> "
         )
-        if player_name == "q":
+        if input_value == "q":
             break
-        player_found: Union[None, Baller] = None
-        # Get a list of all player names
-        player_names = [p.name for p in ballers]
-        # Find the player with the closest matching name
-        closest_match = get_closest_match(player_name, player_names)
-        if closest_match:
-            # Find the player with the closest matching name
-            for p in ballers:
-                if p.name == closest_match:
-                    player_found = p
-                    break
-            if player_found is not None:
-                print(player_found)
-                print(player_found.next_match)
-                print(player_found.stats)
-                print()
+        elif input_value == "b":
+            new_budget = input("Enter new budget value: ")
+            print_solution(ballers, int(new_budget))
         else:
-            print(f"No player found with name {player_name!r}")
+            # Search for player by name
+            player_found: Union[None, Baller] = None
+            player_names = [p.name for p in ballers]
+            closest_match = get_closest_match(input_value, player_names)
+            if closest_match:
+                for p in ballers:
+                    if p.name == closest_match:
+                        player_found = p
+                        break
+                if player_found is not None:
+                    print(player_found)
+                    print(player_found.next_match)
+                    print(player_found.stats)
+                    print()
+            else:
+                print(f"No player found with name {input_value!r}")
