@@ -159,7 +159,7 @@ class Baller:
         ballers team
         """
         matches = league["matches"]
-        next_round: int = 21
+        next_round: int = 22
         start_index: int = matches["firstUnplayedMatch"]["firstUnplayedMatchIndex"]
 
         closest_match = None
