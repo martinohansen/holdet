@@ -3,6 +3,9 @@
 
 import pickle
 
+import pandas as pd  # type: ignore
+from sklearn.linear_model import LinearRegression  # type: ignore
+
 from fotmob import fotmob
 from holdet import holdet
 
@@ -17,6 +20,20 @@ class Baller:
         fotmob = self.fotmob
         holdet = self.holdet
         return f"Baller({name=!r}, {fotmob=!r}, {holdet=!r})"
+
+    @property
+    def goals(self) -> int:
+        if self.fotmob.current_season:
+            if self.fotmob.current_season.goals:
+                return self.fotmob.current_season.goals
+        return 0
+
+    @property
+    def assists(self) -> int:
+        if self.fotmob.current_season:
+            if self.fotmob.current_season.assists:
+                return self.fotmob.current_season.assists
+        return 0
 
 
 class BallerFactory:
@@ -95,3 +112,32 @@ if __name__ == "__main__":
             pickle.dump(factory, file_wb)
 
     ballers = factory()
+
+    # Create a DataFrame from the Baller objects
+    data = {
+        "goals": [baller.goals for baller in ballers],
+        "assists": [baller.assists for baller in ballers],
+        "round_growth": [baller.holdet.growth for baller in ballers],
+    }
+    df = pd.DataFrame(data)
+
+    # Split the data into training and test sets
+    train_df = df.iloc[:3]
+    test_df = df.iloc[3:]
+
+    # Extract the input features and target variable
+    X_train = train_df[["goals", "assists"]]
+    y_train = train_df["round_growth"]
+    X_test = test_df[["goals", "assists"]]
+    y_test = test_df["round_growth"]
+
+    # Create and fit the linear regression model
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+
+    # Make predictions on the test set
+    y_pred = model.predict(X_test)
+
+    # Evaluate the model's performance
+    score = model.score(X_test, y_test)
+    print(f"R^2 score: {score:.2f}")
