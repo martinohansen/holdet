@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+
+import pickle
+
 from fotmob import fotmob
 from holdet import holdet
 
@@ -68,7 +71,7 @@ class BallerFactory:
 
         return self.holdet.Characters.pop(closest_match_idx)  #  type: ignore
 
-    def get_ballers(self) -> list[Baller]:
+    def __call__(self) -> list[Baller]:
         ballers: list[Baller] = []
         for team in self.fotmob.teams:
             for player in team.players:
@@ -82,8 +85,13 @@ class BallerFactory:
 
 
 if __name__ == "__main__":
-    factory = BallerFactory(fotmob.League(), holdet.Game())
-    ballers = factory.get_ballers()
+    cache_file = ".ballers.pkl"
+    try:
+        with open(cache_file, "rb") as file_rb:
+            factory = pickle.load(file_rb)
+    except FileNotFoundError:
+        with open(cache_file, "wb") as file_wb:
+            factory = BallerFactory(fotmob.League(), holdet.Game())
+            pickle.dump(factory, file_wb)
 
-    for baller in ballers:
-        print(baller)
+    ballers = factory()

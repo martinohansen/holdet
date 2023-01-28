@@ -1,5 +1,4 @@
 import concurrent.futures
-import logging
 import re
 
 import requests
@@ -9,7 +8,6 @@ from tqdm import tqdm  # type: ignore
 class App:
     def __init__(self) -> None:
         self.session = requests.Session()
-        self.logger = logging.Logger("App")
 
         self.league_id: int = 47
         self.season_id: int = 879290
@@ -25,7 +23,6 @@ class App:
         obj,
         exclude: list[str] = [
             "session",
-            "logger",
             "league_id",
             "season_id",
         ],
