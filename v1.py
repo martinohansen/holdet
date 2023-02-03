@@ -747,6 +747,17 @@ def print_solution(ballers: list[Baller], budget: int):
     )
 
 
+def find_player(ballers: list[Baller], find: str) -> Union[None, Baller]:
+    """Search for player by name"""
+    player_names = [p.name for p in ballers]
+    closest_match = get_closest_match(find, player_names)
+    if closest_match:
+        for p in ballers:
+            if p.name == closest_match:
+                return p
+    return None
+
+
 if __name__ == "__main__":
     ballers: list[Baller] = []
 
@@ -789,8 +800,9 @@ if __name__ == "__main__":
     while True:
         input_value = input(
             "Valid options are:\n"
-            " 'q' to quit\n"
             " 'b' to change budget value\n"
+            " 'r' to remove a player\n"
+            " 'q' to quit\n"
             "  Any player name to inspect\n\n"
             "> "
         )
@@ -799,20 +811,22 @@ if __name__ == "__main__":
         elif input_value == "b":
             new_budget = input("Enter new budget value: ")
             print_solution(ballers, int(new_budget))
+        elif input_value == "r":
+            remove = input("Enter name of player to remove: ")
+            player_found = find_player(ballers, remove)
+            if player_found:
+                print(f"Removed player {player_found.name!r}")
+                ballers.remove(player_found)
+                print_solution(ballers, int(new_budget))
+            else:
+                print(f"No player found with name {remove!r}")
         else:
             # Search for player by name
-            player_found: Union[None, Baller] = None
-            player_names = [p.name for p in ballers]
-            closest_match = get_closest_match(input_value, player_names)
-            if closest_match:
-                for p in ballers:
-                    if p.name == closest_match:
-                        player_found = p
-                        break
-                if player_found is not None:
-                    print(player_found)
-                    print(player_found.next_match)
-                    print(player_found.stats)
-                    print()
+            player_found = find_player(ballers, input_value)
+            if player_found is not None:
+                print(player_found)
+                print(player_found.next_match)
+                print(player_found.stats)
+                print()
             else:
                 print(f"No player found with name {input_value!r}")
