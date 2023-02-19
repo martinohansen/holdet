@@ -18,15 +18,8 @@ class App:
     def __repr__(self) -> str:
         return self.repr_string(self)
 
-    def repr_string(
-        self,
-        obj,
-        exclude: list[str] = [
-            "session",
-            "league_id",
-            "season_id",
-        ],
-    ) -> str:
+    def repr_string(self, obj, exclude: list[str] = []) -> str:
+        exclude = exclude + ["session", "league_id", "season_id"]
         attrs = []
         for attr, value in obj.__dict__.items():
             if attr not in exclude:
@@ -104,7 +97,8 @@ class SeasonStats(App):
 
 
 class Player(App):
-    def __init__(self, id: int, team: str) -> None:
+    def __init__(self, id, team):
+        # type:(int, Team) -> None
         super().__init__()
 
         resp = self.session.get(f"https://www.fotmob.com/api/playerData?id={id}")
@@ -130,8 +124,9 @@ class Player(App):
     def __repr__(self) -> str:
         id = self.id
         name = self.name
+        team = self.team
         current_season = self.current_season
-        return f"Player({id=!r}, {name=!r}, {current_season=!r})"
+        return f"Player({id=!r}, {name=!r}, {team=!r}, {current_season=!r})"
 
     @property
     def market_value(self) -> int:
@@ -174,7 +169,7 @@ class Team(App):
         self.players: list[Player] = []
         for position in squad[1:]:  # Index 0 is the coach
             for player in position[1]:  # Index 0 is position name
-                self.players.append(Player(player["id"], self.name))
+                self.players.append(Player(player["id"], self))
 
         self.clean_sheets = sum(
             player.current_season.clean_sheets
