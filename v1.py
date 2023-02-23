@@ -149,8 +149,11 @@ class Baller:
                 Away=float(match["coefficients"][2][1]),
             )
         else:
-            print(f"Match have no odds yet: {url=!r} {match=!r} ({self.name!r})")
-            return Odds(0, 0, 0)
+            print(
+                "Match have no odds yet, defaulting to 50% win chance:"
+                f" {id=!r} ({self.name!r})"
+            )
+            return Odds(2, 2, 2)
 
     def __next_match(self) -> Union[None, Match]:
         """
@@ -164,7 +167,7 @@ class Baller:
 
         closest_match = None
         max_similarity = 0.5
-        for match in matches["data"]["allMatches"][start_index:]:
+        for match in matches["allMatches"][start_index:]:
             match_round: int = match["round"]
             if match_round == next_round:
                 home: str = match["home"]["name"]
@@ -497,7 +500,8 @@ class Baller:
                 return 1 / self.next_match.Odds.Home
             elif match_side == "Away":
                 return 1 / self.next_match.Odds.Away
-        return 0.0
+        print(f"No match found for player, using win probability of 50% ({self.name})")
+        return 0.5
 
     def __poisson_probability(self, lambda_, x):
         return (math.exp(-lambda_) * lambda_**x) / math.factorial(x)
