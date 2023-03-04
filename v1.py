@@ -213,7 +213,7 @@ class Baller:
             f"Stats(xG={self.xG!r}, xA={self.xA!r}, xCS={self.xCS!r},"
             f" xWin={self.xWin!r}, xDraw={self.xDraw!r}, xLoss={self.xLoss!r},"
             f" xIn={self.xIn!r}, xOut={self.xOut!r}, xYellow={self.xYellow!r},"
-            f" xRed={self.xRed!r})"
+            f" xRed={self.xRed!r}, xHattrick={self.xHattrick!r})"
         )
 
     def __hash__(self):
@@ -464,7 +464,7 @@ class Baller:
 
         # Finance
         if self.captain:
-            growth += growth * 2
+            growth = growth * 2
 
         return growth
 
