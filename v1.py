@@ -85,6 +85,7 @@ class Baller:
     trend: int
     position: int
     captain: bool = False
+    on_team: bool = False
 
     fotmob: Union[None, dict] = field(init=False)
     next_match: Union[None, Match] = field(init=False)
@@ -216,6 +217,14 @@ class Baller:
             f" xRed={self.xRed!r}, xHattrick={self.xHattrick!r})"
         )
 
+    @property
+    def price(self) -> float:
+        if self.on_team:
+            return self.value
+        else:
+            # Transfer fee is 1%
+            return self.value * 1.01
+
     def __hash__(self):
         return hash(tuple(self.name))
 
@@ -242,7 +251,7 @@ class Baller:
             f" xGrowth={self.xGrowth / 1000000:.3f}M,"
             f" xGrowthRound={self.xGrowthRound / 1000:.0f}K,"
             f" xWinProbability={self.xWinProbability * 100:.0f}%,"
-            f" captain={self.captain!r}, {fotmob=!r})"
+            f" captain={self.captain!r}, on_team={self.on_team!r} {fotmob=!r})"
         )
 
     def __populate_stat(self, stats) -> float:
@@ -584,7 +593,7 @@ class Baller:
             return 0
 
 
-def find_optimal_team(ballers: list[Baller], value_limit):
+def find_optimal_team(ballers: list[Baller], budget):
     # Add the captain variant of each baller to the list of ballers
     captain_variant = copy.deepcopy(ballers)
     for baller in captain_variant:
@@ -614,8 +623,8 @@ def find_optimal_team(ballers: list[Baller], value_limit):
     # Set the objective function to maximize the xGrowth
     problem += sum(variables[b] * b.xGrowthRound for b in ballers)
 
-    # Add the constraint that the value must be less than or equal to the value limit
-    problem += sum(variables[b] * b.value for b in ballers) <= value_limit
+    # Add the constraint that the price must be less than or equal to the budget
+    problem += sum(variables[b] * b.price for b in ballers) <= budget
 
     # Add the constraint that there must be exactly 11 players in total
     problem += sum(variables[b] for b in ballers) == 11
@@ -805,6 +814,7 @@ if __name__ == "__main__":
         input_value = input(
             "Valid options are:\n"
             " 'b' to change budget value\n"
+            " 'p' to add player to team\n"
             " 'r' to remove a player\n"
             " 'q' to quit\n"
             "  Any player name to inspect\n\n"
@@ -814,14 +824,25 @@ if __name__ == "__main__":
             break
         elif input_value == "b":
             new_budget = input("Enter new budget value: ")
-            print_solution(ballers, int(new_budget))
+            budget = int(new_budget)
+            print_solution(ballers, budget)
         elif input_value == "r":
             remove = input("Enter name of player to remove: ")
             player_found = find_player(ballers, remove)
             if player_found:
                 print(f"Removed player {player_found.name!r}")
                 ballers.remove(player_found)
-                print_solution(ballers, int(new_budget))
+                print_solution(ballers, budget)
+            else:
+                print(f"No player found with name {remove!r}")
+        elif input_value == "p":
+            pick = input("Enter name of player to pick: ")
+            player_found = find_player(ballers, pick)
+            if player_found:
+                print(f"Picked player {player_found.name!r}")
+                idx = ballers.index(player_found)
+                ballers[idx].on_team = True
+                print_solution(ballers, budget)
             else:
                 print(f"No player found with name {remove!r}")
         else:
