@@ -453,8 +453,8 @@ class Baller:
         growth += 60000 * self.xA
 
         # Fair play
-        growth += 20000 * self.xYellow
-        growth += 50000 * self.xRed
+        growth += -20000 * self.xYellow
+        growth += -50000 * self.xRed
 
         # Team performance
         growth += 25000 * self.xWin
