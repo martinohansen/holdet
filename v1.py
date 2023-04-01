@@ -218,12 +218,16 @@ class Baller:
         )
 
     @property
-    def price(self) -> float:
+    def transfer_fee(self) -> float:
+        """Transfer fee is 1% of the value"""
         if self.on_team:
-            return self.value
+            return 0.0
         else:
-            # Transfer fee is 1%
-            return self.value * 1.01
+            return self.value * 0.01
+
+    @property
+    def price(self) -> float:
+        return self.value + self.transfer_fee
 
     def __hash__(self):
         return hash(tuple(self.name))
@@ -751,11 +755,12 @@ def print_solution(ballers: list[Baller], budget: int):
             print(player)
         print()
     print(
-        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, expected"
-        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
+        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, transfer"
+        f" fee: {sum(p.transfer_fee for p in solution) / 1000:.0f}K, expected growth:"
+        f" {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
         f" {sum(p.xGrowthRound for p in solution) / 1000:.0f}K next round, average"
-        f" popularity: {(sum(p.popularity for p in solution) / 11) * 100:.2f}%,"
-        f" players considered: {len(ballers)}, fotmob matches:"
+        f" popularity: {(sum(p.popularity for p in solution) / 11) * 100:.2f}%, players"
+        f" considered: {len(ballers)}, fotmob matches:"
         f" {sum(1 for p in ballers if isinstance(p.fotmob, dict))}\n"
     )
 
@@ -769,6 +774,12 @@ def find_player(ballers: list[Baller], find: str) -> Union[None, Baller]:
             if p.name == closest_match:
                 return p
     return None
+
+
+def list_from_file(file: str) -> list[str]:
+    """Read a list of strings from a file"""
+    with open(file, "r") as f:
+        return [line.strip() for line in f.readlines()]
 
 
 if __name__ == "__main__":
@@ -805,8 +816,22 @@ if __name__ == "__main__":
             ballers.append(baller)
 
     budget = 50000000
-    if len(sys.argv) > 1:
+    # TODO: Use argparse instead
+    if len(sys.argv) == 2:
         budget = int(sys.argv[1])
+
+    # If a team file is provided, add the players to the team
+    if len(sys.argv) == 3:
+        budget = int(sys.argv[1])
+        file = sys.argv[2]
+        team = list_from_file(file)
+        for player in team:
+            player_found = find_player(ballers, player)
+            if player_found:
+                idx = ballers.index(player_found)
+                ballers[idx].on_team = True
+            else:
+                print(f"No player found with name {player!r} from team file...")
 
     print_solution(ballers, budget)
 
@@ -814,8 +839,8 @@ if __name__ == "__main__":
         input_value = input(
             "Valid options are:\n"
             " 'b' to change budget value\n"
-            " 'p' to add player to team\n"
             " 'r' to remove a player\n"
+            " 'w' to write team to file\n"
             " 'q' to quit\n"
             "  Any player name to inspect\n\n"
             "> "
@@ -835,16 +860,12 @@ if __name__ == "__main__":
                 print_solution(ballers, budget)
             else:
                 print(f"No player found with name {remove!r}")
-        elif input_value == "p":
-            pick = input("Enter name of player to pick: ")
-            player_found = find_player(ballers, pick)
-            if player_found:
-                print(f"Picked player {player_found.name!r}")
-                idx = ballers.index(player_found)
-                ballers[idx].on_team = True
-                print_solution(ballers, budget)
-            else:
-                print(f"No player found with name {remove!r}")
+        elif input_value == "w":
+            file = input("Enter filename to write to: ")
+            with open(file, "w") as f:
+                for p in ballers:
+                    if p.on_team:
+                        f.write(f"{p.name}\n")
         else:
             # Search for player by name
             player_found = find_player(ballers, input_value)
