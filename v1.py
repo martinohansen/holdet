@@ -509,6 +509,10 @@ class Baller:
             growth = (per_round * stats_weight) + (next_round * round_weight)
         return growth
 
+    @property
+    def xValueNextRound(self) -> float:
+        return self.value + self.xGrowthRound
+
     def __get_match_side(self, match: Match) -> Union[None, str]:
         home_score = self.__similarity(self.team, match.Home)
         away_score = self.__similarity(self.team, match.Away)
@@ -611,7 +615,7 @@ class Baller:
             return 0
 
 
-def find_optimal_team(ballers: list[Baller], budget):
+def find_optimal_team(ballers: list[Baller], budget) -> list[Baller]:
     # Add the captain variant of each baller to the list of ballers
     captain_variant = copy.deepcopy(ballers)
     for baller in captain_variant:
@@ -638,8 +642,8 @@ def find_optimal_team(ballers: list[Baller], budget):
     for team in set(baller.team for baller in ballers):
         problem += sum(variables[b] for b in ballers if b.team == team) <= 4
 
-    # Set the objective function to maximize the xGrowth
-    problem += sum(variables[b] * b.xGrowthRound for b in ballers)
+    # Set the objective function to maximize the value after round
+    problem += sum(variables[b] * b.xValueNextRound for b in ballers)
 
     # Add the constraint that the price must be less than or equal to the budget
     problem += sum(variables[b] * b.price for b in ballers) <= budget
@@ -743,9 +747,7 @@ def get_closest_match(name, choices):
     return closest_match
 
 
-def print_solution(ballers: list[Baller], budget: int):
-    solution: list[Baller] = find_optimal_team(ballers, budget)
-
+def print_solution(solution: list[Baller]):
     team_by_position: dict[str, list[Baller]] = {
         "keepers": [],
         "defenses": [],
@@ -769,9 +771,10 @@ def print_solution(ballers: list[Baller], budget: int):
             print(player)
         print()
     print(
-        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, transfer"
-        f" fee: {sum(p.transfer_fee for p in solution) / 1000:.0f}K, expected growth:"
-        f" {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
+        f"Combined value: {sum(p.value for p in solution) / 1000000:.2f}M, expected"
+        f" after round: {sum(p.xValueNextRound for p in solution) /1000000:.2f}M,"
+        f" transfer fee: {sum(p.transfer_fee for p in solution) / 1000:.0f}K, expected"
+        f" growth: {sum(p.xGrowth for p in solution) / 1000000:.2f}M total /"
         f" {sum(p.xGrowthRound for p in solution) / 1000:.0f}K next round, average"
         f" popularity: {(sum(p.popularity for p in solution) / 11) * 100:.2f}%, players"
         f" considered: {len(ballers)}, fotmob matches:"
@@ -794,6 +797,10 @@ def list_from_file(file: str) -> list[str]:
     """Read a list of strings from a file"""
     with open(file, "r") as f:
         return [line.strip() for line in f.readlines()]
+
+
+def find_and_print_solution(ballers: list[Baller], budget: int) -> None:
+    print_solution(find_optimal_team(ballers, budget))
 
 
 if __name__ == "__main__":
@@ -847,7 +854,7 @@ if __name__ == "__main__":
             else:
                 print(f"No player found with name {player!r} from team file...")
 
-    print_solution(ballers, budget)
+    find_and_print_solution(ballers, budget)
 
     while True:
         input_value = input(
@@ -864,22 +871,21 @@ if __name__ == "__main__":
         elif input_value == "b":
             new_budget = input("Enter new budget value: ")
             budget = int(new_budget)
-            print_solution(ballers, budget)
+            find_and_print_solution(ballers, budget)
         elif input_value == "r":
             remove = input("Enter name of player to remove: ")
             player_found = find_player(ballers, remove)
             if player_found:
                 print(f"Removed player {player_found.name!r}")
                 ballers.remove(player_found)
-                print_solution(ballers, budget)
+                find_and_print_solution(ballers, budget)
             else:
                 print(f"No player found with name {remove!r}")
         elif input_value == "w":
             file = input("Enter filename to write to: ")
             with open(file, "w") as f:
-                for p in ballers:
-                    if p.on_team:
-                        f.write(f"{p.name}\n")
+                for p in find_optimal_team(ballers, budget):
+                    f.write(f"{p.name}\n")
         else:
             # Search for player by name
             player_found = find_player(ballers, input_value)
