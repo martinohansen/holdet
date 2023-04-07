@@ -431,6 +431,16 @@ class Baller:
         return self.__populate_stat(red_cards["TopLists"][0]["StatList"])
 
     @property
+    def x_decisive_goals_win(self) -> float:
+        # TODO: Implement math for decisive goals
+        return 0
+
+    @property
+    def x_decisive_goals_draw(self) -> float:
+        # TODO: Implement math for decisive goals
+        return 0
+
+    @property
     def xGrowth(self) -> float:
         growth: float = 0
 
@@ -451,6 +461,10 @@ class Baller:
             clean_sheet_points = 50000
         else:
             clean_sheet_points = 0
+
+        # Decisive goals
+        growth += 30000 * self.x_decisive_goals_win
+        growth += 15000 * self.x_decisive_goals_draw
 
         # Goals and assists
         growth += goal_points * self.xG
