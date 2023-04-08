@@ -91,7 +91,7 @@ class SeasonStats(App):
         for stat in stats_arr:
             name = stat[0].lower().replace(" ", "_")
             name = re.sub(r"\(.*\)", "", name)
-            value = stat[1]
+            value = stat[1].get("value", "")
             if (
                 isinstance(value, str)
                 or isinstance(value, int)
