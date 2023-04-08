@@ -95,3 +95,8 @@ if __name__ == "__main__":
             pickle.dump(factory, file_wb)
 
     ballers = factory()
+
+    # TODO: Add next match and odds to the team class.
+    # TODO: Convert into dataclasses with classmethod's to get class from id or
+    # dict. Current performance is 15s, the new method should not be slower than
+    # that.
