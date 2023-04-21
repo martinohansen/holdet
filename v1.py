@@ -50,7 +50,7 @@ url = "https://api.holdet.dk/tournaments/422?appid=holdet"
 response = session.get(url)
 tournament = response.json()
 
-url = "https://api.holdet.dk/games/644/rounds/15/statistics?appid=holdet"
+url = "https://api.holdet.dk/games/644/rounds/16/statistics?appid=holdet"
 response = session.get(url)
 game = response.json()
 
@@ -163,7 +163,7 @@ class Baller:
         ballers team
         """
         matches = league["matches"]
-        next_round: int = 31
+        next_round: int = 32
         start_index: int = matches["firstUnplayedMatch"]["firstUnplayedMatchIndex"]
 
         closest_match = None
