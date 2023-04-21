@@ -7,7 +7,7 @@ import sys
 import urllib
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Union
+from typing import Optional, Union
 
 import requests
 from pulp import (  # type: ignore
@@ -70,7 +70,7 @@ class Odds:
 class Match:
     Home: str
     Away: str
-    Odds: Odds
+    Odds: Optional[Odds]
     Round: int
 
 
@@ -86,6 +86,7 @@ class Baller:
     position: int
     captain: bool = False
     on_team: bool = False
+    odds_weight: float = 0.5
 
     fotmob: Union[None, dict] = field(init=False)
     next_match: Union[None, Match] = field(init=False)
@@ -137,7 +138,7 @@ class Baller:
         print(f"Unable to find fotmob match for {self.name} ({self.team})")
         return None
 
-    def __odds(self, id: int) -> Odds:
+    def __odds(self, id: int) -> Optional[Odds]:
         params = "&ccode3=DNK&bettingProvider=Bet365_Denmark"
         url = f"https://www.fotmob.com/api/matchOdds?matchId={id}{params}"
         response = self.__get_api(url)
@@ -149,12 +150,8 @@ class Baller:
                 Draw=float(match["coefficients"][1][1]),
                 Away=float(match["coefficients"][2][1]),
             )
-        else:
-            print(
-                "Match have no odds yet, defaulting to 50% win chance:"
-                f" {id=!r} ({self.name!r})"
-            )
-            return Odds(2, 2, 2)
+        print(f"No odds found ({self.team}/{self.name})")
+        return None
 
     def __next_match(self) -> Union[None, Match]:
         """
@@ -497,13 +494,12 @@ class Baller:
 
     @property
     def xGrowthRound(self) -> float:
-        weight: float = 0.5
         growth = 0.0
 
         if self.total_games != 0 and self.next_match is not None:
             per_round = self.xGrowth / self.total_games
             next_round = per_round * self.xWinProbability
-            round_weight = weight
+            round_weight = self.odds_weight
             stats_weight = 1 - round_weight
 
             growth = (per_round * stats_weight) + (next_round * round_weight)
@@ -526,13 +522,13 @@ class Baller:
     @property
     def xWinProbability(self) -> float:
         if self.next_match:
-            match_side = self.__get_match_side(self.next_match)
-            if match_side == "Home":
-                return 1 / self.next_match.Odds.Home
-            elif match_side == "Away":
-                return 1 / self.next_match.Odds.Away
-        print(f"No match found for player, using win probability of 50% ({self.name})")
-        return 0.5
+            if self.next_match.Odds:
+                match_side = self.__get_match_side(self.next_match)
+                if match_side == "Home":
+                    return 1 / self.next_match.Odds.Home
+                elif match_side == "Away":
+                    return 1 / self.next_match.Odds.Away
+        return 0
 
     def __poisson_probability(self, lambda_, x):
         return (math.exp(-lambda_) * lambda_**x) / math.factorial(x)
@@ -856,16 +852,17 @@ if __name__ == "__main__":
 
     find_and_print_solution(ballers, budget)
 
+    print(
+        "Valid options are:\n"
+        " 'b' to change budget value\n"
+        " 'o' change odds weight\n"
+        " 'r' to remove a player\n"
+        " 'w' to write team to file\n"
+        " 'q' to quit\n"
+        "  Any player name to inspect\n"
+    )
     while True:
-        input_value = input(
-            "Valid options are:\n"
-            " 'b' to change budget value\n"
-            " 'r' to remove a player\n"
-            " 'w' to write team to file\n"
-            " 'q' to quit\n"
-            "  Any player name to inspect\n\n"
-            "> "
-        )
+        input_value = input("> ")
         if input_value == "q":
             break
         elif input_value == "b":
@@ -886,6 +883,11 @@ if __name__ == "__main__":
             with open(file, "w") as f:
                 for p in find_optimal_team(ballers, budget):
                     f.write(f"{p.name}\n")
+        elif input_value == "o":
+            odds_weight = input("Enter new odds weight value: ")
+            for b in ballers:
+                b.odds_weight = float(odds_weight)
+            find_and_print_solution(ballers, budget)
         else:
             # Search for player by name
             player_found = find_player(ballers, input_value)
