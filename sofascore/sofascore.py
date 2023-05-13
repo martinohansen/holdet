@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 import requests
 
@@ -27,29 +28,23 @@ class Game:
     slug: str
     home: Team
     away: Team
+    # homeScore: int
+    # awayScore: int
 
+    startTimestamp: int
 
-@dataclass
-class Player:
-    id: int
-    name: str
-    slug: str
-    shortName: str
-    position: str
-
-
-@dataclass
-class Lineup:
-    home: list[Player]
-    away: list[Player]
+    def __lt__(self, other):
+        return self.startTimestamp < other.startTimestamp
 
     @property
-    def all(self) -> list[Player]:
-        return self.home + self.away
+    def startTimestampHuman(self) -> str:
+        return datetime.fromtimestamp(self.startTimestamp).strftime("%Y-%m-%d %H:%M")
 
 
 @dataclass
 class Statistics:
+    game: Game
+
     assists: int = 0
     expectedAssists: float = 0.0
     expectedGoals: float = 0.0
@@ -63,6 +58,35 @@ class Statistics:
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    def __lt__(self, other):
+        return self.game < other.game
+
+
+@dataclass
+class Player:
+    id: int
+    name: str
+    slug: str
+    shortName: str
+    position: str
+
+    team: Team
+
+    def __eq__(self, __value: object) -> bool:
+        if not isinstance(__value, Player):
+            raise NotImplementedError
+        return self.id == __value.id
+
+
+@dataclass
+class Lineup:
+    home: list[tuple[Player, Statistics]]
+    away: list[tuple[Player, Statistics]]
+
+    @property
+    def all(self) -> list[tuple[Player, Statistics]]:
+        return self.home + self.away
 
 
 class Client:
@@ -106,12 +130,15 @@ class Client:
                     slug=game["homeTeam"]["slug"],
                     shortName=game["homeTeam"]["shortName"],
                 ),
+                # homeScore=game["homeScore"]["current"],
                 away=Team(
                     id=game["awayTeam"]["id"],
                     name=game["awayTeam"]["name"],
                     slug=game["awayTeam"]["slug"],
                     shortName=game["awayTeam"]["shortName"],
                 ),
+                # awayScore=game["awayScore"]["current"],
+                startTimestamp=game["startTimestamp"],
             )
             for game in response["events"]
         ]
@@ -120,29 +147,41 @@ class Client:
         response = self._get(f"/event/{game.id}/lineups")
         return Lineup(
             home=[
-                Player(
-                    id=player["player"]["id"],
-                    name=player["player"]["name"],
-                    slug=player["player"]["slug"],
-                    shortName=player["player"]["shortName"],
-                    position=player["player"]["position"],
+                (
+                    Player(
+                        id=player["player"]["id"],
+                        name=player["player"]["name"],
+                        slug=player["player"]["slug"],
+                        shortName=player["player"]["shortName"],
+                        position=player["player"]["position"],
+                        team=game.home,
+                    ),
+                    Statistics(
+                        game=game,
+                        **player["statistics"],
+                    ),
                 )
                 for player in response["home"]["players"]
             ],
             away=[
-                Player(
-                    id=player["player"]["id"],
-                    name=player["player"]["name"],
-                    slug=player["player"]["slug"],
-                    shortName=player["player"]["shortName"],
-                    position=player["player"]["position"],
+                (
+                    Player(
+                        id=player["player"]["id"],
+                        name=player["player"]["name"],
+                        slug=player["player"]["slug"],
+                        shortName=player["player"]["shortName"],
+                        position=player["player"]["position"],
+                        team=game.away,
+                    ),
+                    Statistics(
+                        game=game,
+                        **player["statistics"],
+                    ),
                 )
                 for player in response["away"]["players"]
             ],
         )
 
-    # TODO: Reduce needed calls by picking uo the stats directly from the lineup
-    # call
     def statistics(self, game: Game, player: Player) -> Statistics:
         response = self._get(f"/event/{game.id}/player/{player.id}/statistics")
-        return Statistics(**response["statistics"])
+        return Statistics(game=Game, **response["statistics"])
