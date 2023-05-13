@@ -1,7 +1,11 @@
+import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
+from pyrate_limiter import MemoryListBucket
+from requests_cache import CacheMixin, FileCache
+from requests_ratelimiter import LimiterMixin
 
 
 @dataclass
@@ -89,6 +93,10 @@ class Lineup:
         return self.home + self.away
 
 
+class CachedLimiterSession(CacheMixin, LimiterMixin, requests.Session):
+    pass
+
+
 class Client:
     def __init__(self, base_url: str = "https://api.sofascore.com/api/v1") -> None:
         self.base_url = base_url
@@ -98,7 +106,14 @@ class Client:
             "User-Agent": "Mozilla/5.0 (Macintosh)",
         }
 
-        self.http = requests.Session()
+        # Setup request cache and limiter to avoid hitting the API too often and
+        # getting blocked
+        self.http = CachedLimiterSession(
+            per_second=1,
+            bucket_class=MemoryListBucket,
+            expire_after=timedelta(days=30),
+            backend=FileCache(".sofascore_cache"),
+        )
 
     def _get(self, endpoint, params=None):
         url = self.base_url + endpoint
@@ -144,7 +159,11 @@ class Client:
         ]
 
     def lineup(self, game: Game) -> Lineup:
-        response = self._get(f"/event/{game.id}/lineups")
+        try:
+            response = self._get(f"/event/{game.id}/lineups")
+        except requests.exceptions.HTTPError:
+            logging.warning(f"Could not get lineup for {game}")
+            return Lineup(home=[], away=[])
         return Lineup(
             home=[
                 (

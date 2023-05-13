@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-
+import logging
 from dataclasses import dataclass
 
 from rich import print
+from rich.logging import RichHandler
 
 from holdet import holdet
 from sofascore import sofascore
@@ -126,6 +127,11 @@ class Candidate:
 
 
 if __name__ == "__main__":
+    # Setup logger with Rich formatting
+    logging.basicConfig(
+        level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
+    )
+
     h = holdet.Client()
     characters = h.characters(
         tournament_id=422,  # Premier League
