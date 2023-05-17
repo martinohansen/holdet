@@ -32,17 +32,20 @@ class Game:
     slug: str
     home: Team
     away: Team
-    # homeScore: int
-    # awayScore: int
+    homeScore: int
+    awayScore: int
+
+    round: int
+    tournament: Tournament
 
     startTimestamp: int
-
-    def __lt__(self, other):
-        return self.startTimestamp < other.startTimestamp
 
     @property
     def startTimestampHuman(self) -> str:
         return datetime.fromtimestamp(self.startTimestamp).strftime("%Y-%m-%d %H:%M")
+
+    def __lt__(self, other):
+        return self.startTimestamp < other.startTimestamp
 
 
 @dataclass
@@ -73,7 +76,6 @@ class Player:
     name: str
     slug: str
     shortName: str
-    position: str
 
     team: Team
 
@@ -111,7 +113,7 @@ class Client:
         self.http = CachedLimiterSession(
             per_second=1,
             bucket_class=MemoryListBucket,
-            expire_after=timedelta(days=30),
+            expire_after=timedelta(days=300),
             backend=FileCache(".sofascore_cache"),
         )
 
@@ -121,8 +123,8 @@ class Client:
         response.raise_for_status()
         return response.json()
 
-    def teams(self, t: Tournament) -> list[Team]:
-        response = self._get(f"{t.endpoint}/statistics/info")
+    def teams(self, tournament: Tournament) -> list[Team]:
+        response = self._get(f"{tournament.endpoint}/statistics/info")
         return [
             Team(
                 id=team["id"],
@@ -133,29 +135,33 @@ class Client:
             for team in response["teams"]
         ]
 
-    def games(self, t: Tournament, round: int) -> list[Game]:
-        response = self._get(f"{t.endpoint}/events/round/{round}")
+    def games(self, tournament: Tournament, round: int) -> list[Game]:
+        response = self._get(f"{tournament.endpoint}/events/round/{round}")
         return [
             Game(
                 id=game["id"],
                 slug=game["slug"],
+                tournament=tournament,
+                round=game["roundInfo"]["round"],
                 home=Team(
                     id=game["homeTeam"]["id"],
                     name=game["homeTeam"]["name"],
                     slug=game["homeTeam"]["slug"],
                     shortName=game["homeTeam"]["shortName"],
                 ),
-                # homeScore=game["homeScore"]["current"],
+                homeScore=game["homeScore"]["current"],
                 away=Team(
                     id=game["awayTeam"]["id"],
                     name=game["awayTeam"]["name"],
                     slug=game["awayTeam"]["slug"],
                     shortName=game["awayTeam"]["shortName"],
                 ),
-                # awayScore=game["awayScore"]["current"],
+                awayScore=game["awayScore"]["current"],
                 startTimestamp=game["startTimestamp"],
             )
             for game in response["events"]
+            # Only include games that have been played
+            if game["status"]["code"] == 100
         ]
 
     def lineup(self, game: Game) -> Lineup:
@@ -172,7 +178,6 @@ class Client:
                         name=player["player"]["name"],
                         slug=player["player"]["slug"],
                         shortName=player["player"]["shortName"],
-                        position=player["player"]["position"],
                         team=game.home,
                     ),
                     Statistics(
@@ -189,7 +194,6 @@ class Client:
                         name=player["player"]["name"],
                         slug=player["player"]["slug"],
                         shortName=player["player"]["shortName"],
-                        position=player["player"]["position"],
                         team=game.away,
                     ),
                     Statistics(

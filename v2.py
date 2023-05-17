@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from rich import print
 from rich.logging import RichHandler
+from rich.progress import track
 
 from holdet import holdet
 from sofascore import sofascore
@@ -86,22 +87,53 @@ class Stats:
     red_card: int
 
     # Team performance
-    win: bool
-    draw: bool
-    loss: bool
+    win: int
+    draw: int
+    loss: int
     team_goal: int
     opponent_goal: int
-    win_away: bool
-    loss_away: bool
+    win_away: int
+    loss_away: int
 
     # Special
-    clean_sheet: bool
-    played: bool
-    subbed_in: bool
-    subbed_out: bool
+    clean_sheet: int
+    played: int
+    subbed_in: int
+    subbed_out: int
     saved_penalty: int
     missed_penalty: int
     hattrick: int
+
+    @classmethod
+    def from_sofascore(self, stats: list[sofascore.Statistics]) -> "Stats":
+        return Stats(
+            goals=sum(stat.goals for stat in stats),
+            assists=sum(stat.assists for stat in stats),
+            xGoals=sum(stat.expectedGoals for stat in stats),
+            xAssists=sum(stat.expectedAssists for stat in stats),
+            # TODO: Populate the rest of the stats with zeros
+            own_goals=0,
+            shots_on_target=0,
+            winning_goals=0,
+            equalizing_goals=0,
+            goals_conceded=0,
+            yellow_card=0,
+            red_card=0,
+            win=0,
+            draw=0,
+            loss=0,
+            team_goal=0,
+            opponent_goal=0,
+            win_away=0,
+            loss_away=0,
+            clean_sheet=0,
+            played=0,
+            subbed_in=0,
+            subbed_out=0,
+            saved_penalty=0,
+            missed_penalty=0,
+            hattrick=0,
+        )
 
 
 @dataclass
@@ -109,14 +141,41 @@ class Candidate:
     holdet_character: holdet.Character
     sofascore_player: sofascore.Player
     sofascore_stats: list[sofascore.Statistics]
+    captain: bool = False
 
     @property
     def name(self) -> str:
         return self.holdet_character.name
 
     @property
+    def team(self) -> str:
+        return self.holdet_character.team
+
+    @property
+    def stats(self) -> Stats:
+        return Stats.from_sofascore(self.sofascore_stats)
+
+    @property
+    def emoji(self) -> str:
+        if self.captain:
+            return "👑"
+        if self.holdet_character.keeper:
+            return "🧤"
+        return "⚽️"
+
+    @property
     def similarity(self) -> float:
         return _similarity(self.sofascore_player, self.holdet_character)
+
+    @property
+    def warning(self) -> str:
+        warnings: list[str] = []
+        if self.similarity < 0.6:
+            warnings.append(f"low similarity: {self.similarity * 100:.0f}%")
+
+        if warnings:
+            return "🚨 " + ", ".join(warnings)
+        return ""
 
     def __eq__(self, __value: object) -> bool:
         if isinstance(__value, Candidate):
@@ -124,6 +183,11 @@ class Candidate:
         if isinstance(__value, sofascore.Player):
             return self.sofascore_player == __value
         raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return f"{self.emoji} {self.name} ({self.team}) {self.stats} " + (
+            self.warning if self.warning else ""
+        )
 
 
 if __name__ == "__main__":
@@ -145,10 +209,8 @@ if __name__ == "__main__":
     c = sofascore.Client()
 
     candidates: list[Candidate] = []
-    for round in range(30, 35):
+    for round in track(range(20, 35), description="Rounds..."):
         for game in c.games(pl, round):
-            # TODO: Fix 404 from missing lineups, I suspect this is from the
-            # canceled/rescheduled games.
             players = c.lineup(game).all
             for player, stats in players:
                 if player not in candidates:
@@ -170,4 +232,4 @@ if __name__ == "__main__":
                         if candidate == player:
                             candidate.sofascore_stats.append(stats)
 
-    print(candidates[:1])
+    print(candidates)
