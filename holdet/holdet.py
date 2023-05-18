@@ -16,27 +16,63 @@ class Character:
 
     @property
     def keeper(self) -> bool:
-        if self.position == 6:
-            return True
-        return False
+        return self.position == 6
 
     @property
     def defense(self) -> bool:
-        if self.position == 7:
-            return True
-        return False
+        return self.position == 7
 
     @property
     def midfielder(self) -> bool:
-        if self.position == 8:
-            return True
-        return False
+        return self.position == 8
 
     @property
     def forward(self) -> bool:
-        if self.position == 9:
-            return True
-        return False
+        return self.position == 9
+
+
+@dataclass
+class Points:
+    character: Character
+
+    @property
+    def goal(self) -> int:
+        if self.character.keeper:
+            return 250000
+        elif self.character.defense:
+            return 175000
+        elif self.character.midfielder:
+            return 150000
+        elif self.character.forward:
+            return 125000
+        else:
+            return 0
+
+    own_goal = -75000
+    assist = 60000
+    shot_on_goal = 10000
+    scoring_victory = 30000
+    scoring_draw = 15000
+    yellow_card = -20000
+    second_yellow_card = -20000
+    direct_red_card = -50000
+    team_win = 25000
+    team_draw = 5000
+    team_loss = -15000
+    team_score = 10000
+    opponent_score = -8000
+    away_win = 10000
+    home_loss = -10000
+    on_field = 7000
+    off_field = -5000
+    clean_sheet_defense = 50000
+    clean_sheet_goalkeeper = 75000
+    goalkeeper_save = 5000
+    penalty_save = 100000
+    penalty_miss = -30000
+    hattrick = 100000
+    captain_bonus_multiplier = 2
+    bank_interest_multiplier = 1.01
 
 
 class Client:

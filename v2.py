@@ -67,76 +67,6 @@ def _find_closest_character(
 
 
 @dataclass
-class Stats:
-    # Goals and assists
-    goals: int
-    assists: int
-    xGoals: float
-    xAssists: float
-    own_goals: int
-    shots_on_target: int
-
-    # Decisive goals
-    winning_goals: int
-    equalizing_goals: int
-
-    goals_conceded: int
-
-    # Fair play
-    yellow_card: int
-    red_card: int
-
-    # Team performance
-    win: int
-    draw: int
-    loss: int
-    team_goal: int
-    opponent_goal: int
-    win_away: int
-    loss_away: int
-
-    # Special
-    clean_sheet: int
-    played: int
-    subbed_in: int
-    subbed_out: int
-    saved_penalty: int
-    missed_penalty: int
-    hattrick: int
-
-    @classmethod
-    def from_sofascore(self, stats: list[sofascore.Statistics]) -> "Stats":
-        return Stats(
-            goals=sum(stat.goals for stat in stats),
-            assists=sum(stat.assists for stat in stats),
-            xGoals=sum(stat.expectedGoals for stat in stats),
-            xAssists=sum(stat.expectedAssists for stat in stats),
-            # TODO: Populate the rest of the stats with zeros
-            own_goals=0,
-            shots_on_target=0,
-            winning_goals=0,
-            equalizing_goals=0,
-            goals_conceded=0,
-            yellow_card=0,
-            red_card=0,
-            win=0,
-            draw=0,
-            loss=0,
-            team_goal=0,
-            opponent_goal=0,
-            win_away=0,
-            loss_away=0,
-            clean_sheet=0,
-            played=0,
-            subbed_in=0,
-            subbed_out=0,
-            saved_penalty=0,
-            missed_penalty=0,
-            hattrick=0,
-        )
-
-
-@dataclass
 class Candidate:
     holdet_character: holdet.Character
     sofascore_player: sofascore.Player
@@ -152,30 +82,46 @@ class Candidate:
         return self.holdet_character.team
 
     @property
-    def stats(self) -> Stats:
-        return Stats.from_sofascore(self.sofascore_stats)
-
-    @property
-    def emoji(self) -> str:
-        if self.captain:
-            return "👑"
-        if self.holdet_character.keeper:
-            return "🧤"
-        return "⚽️"
-
-    @property
     def similarity(self) -> float:
         return _similarity(self.sofascore_player, self.holdet_character)
 
-    @property
-    def warning(self) -> str:
-        warnings: list[str] = []
-        if self.similarity < 0.6:
-            warnings.append(f"low similarity: {self.similarity * 100:.0f}%")
+    def xGrowth(self, stat: sofascore.Statistics) -> float:
+        points = holdet.Points(self.holdet_character)
+        growth: float = 0
 
-        if warnings:
-            return "🚨 " + ", ".join(warnings)
-        return ""
+        # Goals and assists
+        growth += points.goal * stat.expectedGoals
+        growth += points.assist * stat.expectedAssists
+        growth += points.shot_on_goal * stat.onTargetScoringAttempt
+
+        # Decisive goals
+        # growth += 30000 * self.x_decisive_goals_win
+        # growth += 15000 * self.x_decisive_goals_draw
+
+        # Fair play
+        # growth += points.yellow_card * stat.yellowCard
+        # growth += -50000 * self.xRed
+
+        # # Team performance
+        # growth += 25000 * self.xWin
+        # growth += 5000 * self.xDraw
+        # growth += -15000 * self.xLoss
+        # growth += 10000 * self.xTeamGoals
+        # growth += -8000 * self.xTeamConceded
+        # growth += 10000 * self.xWinAway
+        # growth += -1000 * self.xLossHome
+
+        # # Special
+        # growth += clean_sheet_points * self.xCS
+        # growth += 7000 * self.xIn
+        # growth += -5000 * self.xOut
+        # growth += 100000 * self.xHattrick
+
+        # Finance
+        if self.captain:
+            growth = growth * 2
+
+        return growth
 
     def __eq__(self, __value: object) -> bool:
         if isinstance(__value, Candidate):
@@ -185,8 +131,15 @@ class Candidate:
         raise NotImplementedError
 
     def __repr__(self) -> str:
-        return f"{self.emoji} {self.name} ({self.team}) {self.stats} " + (
-            self.warning if self.warning else ""
+        # Find suitable emoji to identify player
+        if self.captain:
+            emoji = "👑"
+        if self.holdet_character.keeper:
+            emoji = "🧤"
+        emoji = "⚽️"
+
+        return f"{emoji} {self.name} ({self.team}) " + ", ".join(
+            str(self.xGrowth(stat)) for stat in sorted(self.sofascore_stats)
         )
 
 

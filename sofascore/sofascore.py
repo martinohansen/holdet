@@ -62,6 +62,9 @@ class Statistics:
     savedShotsFromInsideTheBox: int = 0
     saves: int = 0
 
+    # TODO: We need to read yellow and red cards from the incident call:
+    # https://api.sofascore.com/api/v1/event/11227333/incidents
+
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
