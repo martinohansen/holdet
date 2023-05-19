@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 
 import requests
 from pyrate_limiter import MemoryListBucket
@@ -24,6 +25,11 @@ class Team:
     name: str
     slug: str
     shortName: str
+
+
+class Side(Enum):
+    HOME = 0
+    AWAY = 1
 
 
 @dataclass
@@ -51,6 +57,8 @@ class Game:
 @dataclass
 class Statistics:
     game: Game
+    side: Side
+    substitute: bool
 
     assists: int = 0
     expectedAssists: float = 0.0
@@ -61,6 +69,48 @@ class Statistics:
     onTargetScoringAttempt: int = 0
     savedShotsFromInsideTheBox: int = 0
     saves: int = 0
+
+    @property
+    def win(self) -> bool:
+        return (self.game.homeScore > self.game.awayScore) == (self.side == Side.HOME)
+
+    @property
+    def loss(self) -> bool:
+        return (self.game.homeScore < self.game.awayScore) == (self.side == Side.HOME)
+
+    @property
+    def draw(self) -> bool:
+        return self.game.homeScore == self.game.awayScore
+
+    @property
+    def team_goals(self) -> int:
+        return self.game.homeScore if self.side == Side.HOME else self.game.awayScore
+
+    @property
+    def team_goals_conceded(self) -> int:
+        return self.game.awayScore if self.side == Side.HOME else self.game.homeScore
+
+    @property
+    def clean_sheet(self) -> bool:
+        return self.team_goals_conceded == 0
+
+    # These methods are not perfect, but they are a good enought approximation
+    # and they help favor players scoring goals versus defending players.
+    @property
+    def decisive_goal_for_draw(self) -> bool:
+        if self.goals == 0:
+            return False
+        if self.draw:
+            return (self.team_goals - self.goals) + 1 == self.team_goals_conceded
+        return False
+
+    @property
+    def decisive_goal_for_win(self) -> bool:
+        if self.goals == 0:
+            return False
+        if self.win:
+            return (self.team_goals - self.goals) == self.team_goals_conceded
+        return False
 
     # TODO: We need to read yellow and red cards from the incident call:
     # https://api.sofascore.com/api/v1/event/11227333/incidents
@@ -185,6 +235,8 @@ class Client:
                     ),
                     Statistics(
                         game=game,
+                        side=Side.HOME,
+                        substitute=player["substitute"],
                         **player["statistics"],
                     ),
                 )
@@ -201,6 +253,8 @@ class Client:
                     ),
                     Statistics(
                         game=game,
+                        side=Side.AWAY,
+                        substitute=player["substitute"],
                         **player["statistics"],
                     ),
                 )

@@ -95,27 +95,27 @@ class Candidate:
         growth += points.shot_on_goal * stat.onTargetScoringAttempt
 
         # Decisive goals
-        # growth += 30000 * self.x_decisive_goals_win
-        # growth += 15000 * self.x_decisive_goals_draw
+        growth += points.scoring_victory * stat.decisive_goal_for_win
+        growth += points.scoring_draw * stat.decisive_goal_for_draw
 
         # Fair play
         # growth += points.yellow_card * stat.yellowCard
         # growth += -50000 * self.xRed
 
         # # Team performance
-        # growth += 25000 * self.xWin
-        # growth += 5000 * self.xDraw
-        # growth += -15000 * self.xLoss
-        # growth += 10000 * self.xTeamGoals
-        # growth += -8000 * self.xTeamConceded
-        # growth += 10000 * self.xWinAway
-        # growth += -1000 * self.xLossHome
+        growth += points.team_win * stat.win
+        growth += points.team_draw * stat.draw
+        growth += points.team_loss * stat.loss
+        growth += points.team_score * stat.team_goals
+        growth += points.opponent_score * stat.team_goals_conceded
+        growth += points.away_win if stat.side == "away" and stat.win else 0
+        growth += points.home_loss if stat.side == "home" and stat.loss else 0
 
         # # Special
-        # growth += clean_sheet_points * self.xCS
-        # growth += 7000 * self.xIn
-        # growth += -5000 * self.xOut
-        # growth += 100000 * self.xHattrick
+        growth += points.clean_sheet if stat.clean_sheet else 0
+        growth += points.on_field if stat.minutesPlayed != 0 else 0
+        growth += points.off_field if stat.minutesPlayed == 0 else 0
+        growth += points.hattrick if stat.expectedGoals >= 3 else 0
 
         # Finance
         if self.captain:
@@ -123,12 +123,19 @@ class Candidate:
 
         return growth
 
+    @property
+    def xGrowthTotal(self) -> float:
+        return sum(self.xGrowth(stat) for stat in self.sofascore_stats)
+
     def __eq__(self, __value: object) -> bool:
         if isinstance(__value, Candidate):
             return self.name == __value.name
         if isinstance(__value, sofascore.Player):
             return self.sofascore_player == __value
         raise NotImplementedError
+
+    def __lt__(self, other):
+        return self.xGrowthTotal < other.xGrowthTotal
 
     def __repr__(self) -> str:
         # Find suitable emoji to identify player
@@ -138,8 +145,13 @@ class Candidate:
             emoji = "🧤"
         emoji = "⚽️"
 
-        return f"{emoji} {self.name} ({self.team}) " + ", ".join(
-            str(self.xGrowth(stat)) for stat in sorted(self.sofascore_stats)
+        growth_list = [
+            f"{self.xGrowth(stat) / 1000:.0f}K" for stat in sorted(self.sofascore_stats)
+        ]
+        return (
+            f"{emoji} {self.name} ({self.team})"
+            f" xGrowthTotal={self.xGrowthTotal / 1000000:.2f}M"
+            f" ({', '.join(growth_list)})"
         )
 
 
@@ -162,7 +174,7 @@ if __name__ == "__main__":
     c = sofascore.Client()
 
     candidates: list[Candidate] = []
-    for round in track(range(20, 35), description="Rounds..."):
+    for round in track(range(10, 35)):
         for game in c.games(pl, round):
             players = c.lineup(game).all
             for player, stats in players:
@@ -185,4 +197,4 @@ if __name__ == "__main__":
                         if candidate == player:
                             candidate.sofascore_stats.append(stats)
 
-    print(candidates)
+    print(sorted(candidates)[-10:])

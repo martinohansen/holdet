@@ -48,6 +48,15 @@ class Points:
         else:
             return 0
 
+    @property
+    def clean_sheet(self) -> int:
+        if self.character.keeper:
+            return 75000
+        elif self.character.defense:
+            return 50000
+        else:
+            return 0
+
     own_goal = -75000
     assist = 60000
     shot_on_goal = 10000
@@ -65,8 +74,6 @@ class Points:
     home_loss = -10000
     on_field = 7000
     off_field = -5000
-    clean_sheet_defense = 50000
-    clean_sheet_goalkeeper = 75000
     goalkeeper_save = 5000
     penalty_save = 100000
     penalty_miss = -30000
