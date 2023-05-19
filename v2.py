@@ -85,7 +85,7 @@ class Candidate:
     def similarity(self) -> float:
         return _similarity(self.sofascore_player, self.holdet_character)
 
-    def xGrowth(self, stat: sofascore.Statistics) -> float:
+    def growth(self, stat: sofascore.Statistics) -> float:
         points = holdet.Points(self.holdet_character)
         growth: float = 0
 
@@ -124,8 +124,22 @@ class Candidate:
         return growth
 
     @property
-    def xGrowthTotal(self) -> float:
-        return sum(self.xGrowth(stat) for stat in self.sofascore_stats)
+    def growthTotal(self) -> float:
+        return sum(self.growth(stat) for stat in self.sofascore_stats)
+
+    def xGrowth(self, alpha: float = 0.5) -> float:
+        """
+        Predict the growth for the next game using exponential moving average
+        (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
+        values give more weight to recent stats.
+        """
+        ema = 0.0
+        for i, stat in enumerate(sorted(self.sofascore_stats)):
+            if i == 0:
+                ema = self.growth(stat)
+            else:
+                ema = alpha * self.growth(stat) + (1 - alpha) * ema
+        return ema
 
     def __eq__(self, __value: object) -> bool:
         if isinstance(__value, Candidate):
@@ -135,7 +149,7 @@ class Candidate:
         raise NotImplementedError
 
     def __lt__(self, other):
-        return self.xGrowthTotal < other.xGrowthTotal
+        return self.xGrowth() < other.xGrowth()
 
     def __repr__(self) -> str:
         # Find suitable emoji to identify player
@@ -146,11 +160,12 @@ class Candidate:
         emoji = "⚽️"
 
         growth_list = [
-            f"{self.xGrowth(stat) / 1000:.0f}K" for stat in sorted(self.sofascore_stats)
+            f"{self.growth(stat) / 1000:.0f}K" for stat in sorted(self.sofascore_stats)
         ]
         return (
             f"{emoji} {self.name} ({self.team})"
-            f" xGrowthTotal={self.xGrowthTotal / 1000000:.2f}M"
+            f" xGrowth={self.xGrowth() / 1000:.2f}K"
+            f" growthTotal={self.growthTotal / 1000000:.2f}M"
             f" ({', '.join(growth_list)})"
         )
 
@@ -174,7 +189,7 @@ if __name__ == "__main__":
     c = sofascore.Client()
 
     candidates: list[Candidate] = []
-    for round in track(range(10, 35)):
+    for round in track(range(1, 36)):
         for game in c.games(pl, round):
             players = c.lineup(game).all
             for player, stats in players:
@@ -197,4 +212,5 @@ if __name__ == "__main__":
                         if candidate == player:
                             candidate.sofascore_stats.append(stats)
 
+    print(sorted(candidates)[:10])
     print(sorted(candidates)[-10:])
