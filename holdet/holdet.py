@@ -1,58 +1,105 @@
+import logging
 from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
 
 import requests
 
 
 @dataclass
-class Character:
+class Game:
+    id: int
+    tournament_id: int
+
+
+@dataclass
+class Team:
+    id: int
     name: str
+    slug: str
+
+
+@dataclass
+class Person:
+    id: int
+    first_name: str
+    last_name: str
+    slug: str
+
+    @property
+    def name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
+
+
+class Position(Enum):
+    KEEPER = 6
+    DEFENSE = 7
+    MIDFIELDER = 8
+    FORWARD = 9
+
+
+@dataclass
+class Player:
+    id: int
+    person: Person
+    team: Team
+    position: Position
+
+
+@dataclass
+class Round:
+    number: int
+    start: datetime
+    end: datetime
+
+
+@dataclass
+class Tournament:
+    id: int
+    teams: list[Team]
+    players: list[Player]
+    persons: list[Person]
+
+
+@dataclass
+class Values:
+    id: int
     value: int
     growth: int
     totalGrowth: int
     popularity: float
     trend: int
-    position: int
-    team: str
 
-    @property
-    def keeper(self) -> bool:
-        return self.position == 6
 
-    @property
-    def defense(self) -> bool:
-        return self.position == 7
-
-    @property
-    def midfielder(self) -> bool:
-        return self.position == 8
-
-    @property
-    def forward(self) -> bool:
-        return self.position == 9
+@dataclass
+class Statistics:
+    round: Round
+    player: Player
+    values: Values
 
 
 @dataclass
 class Points:
-    character: Character
+    position: Position
 
     @property
     def goal(self) -> int:
-        if self.character.keeper:
+        if self.position.KEEPER:
             return 250000
-        elif self.character.defense:
+        elif self.position.DEFENSE:
             return 175000
-        elif self.character.midfielder:
+        elif self.position.MIDFIELDER:
             return 150000
-        elif self.character.forward:
+        elif self.position.FORWARD:
             return 125000
         else:
             return 0
 
     @property
     def clean_sheet(self) -> int:
-        if self.character.keeper:
+        if self.position.KEEPER:
             return 75000
-        elif self.character.defense:
+        elif self.position.DEFENSE:
             return 50000
         else:
             return 0
@@ -99,53 +146,97 @@ class Client:
         response.raise_for_status()
         return response.json()
 
-    def characters(
-        self,
-        tournament_id: int,
-        game_id: int,
-        game_round: int,
-    ) -> list[Character]:
-        tournament = self._get(f"/tournaments/{tournament_id}")
-        game = self._get(f"/games/{game_id}/rounds/{game_round}/statistics")
+    def rounds(self, game: Game) -> list[Round]:
+        g = self._get(f"/games/{game.id}")
 
-        tournament_players = [
-            player
-            for player in tournament["players"]
-            if any(character["player"]["id"] == player["id"] for character in game)
-        ]
+        rounds: list[Round] = []
+        for index, round in enumerate(g["rounds"]):
+            rounds.append(
+                Round(
+                    number=index + 1,
+                    start=datetime.fromisoformat(round["start"]),
+                    end=datetime.fromisoformat(round["end"]),
+                )
+            )
+        return rounds
 
-        characters: list[Character] = []
-        for player in tournament_players:
-            # Find the team in the tournament that the player belongs to
-            team = next(
-                t for t in tournament["teams"] if t["id"] == player["team"]["id"]
+    def statistics(self, game: Game, round: Round) -> list[Statistics]:
+        tournament = self.tournament(game)
+        stats = self._get(f"/games/{game.id}/rounds/{round.number}/statistics")
+
+        statistics: list[Statistics] = []
+        for stat in stats:
+            try:
+                player = next(
+                    p for p in tournament.players if p.id == stat["player"]["id"]
+                )
+            except StopIteration:
+                # Not all players in the tournament are in the game
+                logging.debug(f"Player {stat['player']['id']} not found in tournament")
+                continue
+
+            values = Values(
+                stat["values"]["id"],
+                stat["values"]["value"],
+                stat["values"]["growth"],
+                stat["values"]["totalGrowth"],
+                stat["values"]["popularity"],
+                stat["values"]["trend"],
             )
 
-            # Find the character for the player in the game
-            character = next(
-                character
-                for character in game
-                if character["player"]["id"] == player["id"]
+            statistics.append(
+                Statistics(
+                    round,
+                    player,
+                    values,
+                )
             )
+        return statistics
 
-            # Find the person for the player in the tournament
-            person = next(
-                person
-                for person in tournament["persons"]
-                if person["id"] == player["person"]["id"]
-            )
+    def tournament(self, game: Game) -> Tournament:
+        tournament = self._get(f"/tournaments/{game.tournament_id}")
 
-            characters.append(
-                Character(
-                    name=person["firstname"] + " " + person["lastname"],
-                    growth=character["values"]["growth"],
-                    totalGrowth=character["values"]["totalGrowth"],
-                    value=character["values"]["value"],
-                    popularity=character["values"]["popularity"],
-                    trend=character["values"]["trend"],
-                    position=player["position"]["id"],
-                    team=team["name"],
+        teams: list[Team] = []
+        for team in tournament["teams"]:
+            teams.append(
+                Team(
+                    team["id"],
+                    team["name"],
+                    team["slug"],
                 )
             )
 
-        return characters
+        persons: list[Person] = []
+        for person in tournament["persons"]:
+            persons.append(
+                Person(
+                    person["id"],
+                    person["firstname"],
+                    person["lastname"],
+                    person["slug"],
+                )
+            )
+
+        players: list[Player] = []
+        for player in tournament["players"]:
+            # Find the team in the tournament that the player belongs to
+            team = next(t for t in teams if t.id == player["team"]["id"])
+
+            # Find the person for the player in the tournament
+            person = next(p for p in persons if p.id == player["person"]["id"])
+
+            players.append(
+                Player(
+                    player["id"],
+                    person,
+                    team,
+                    Position(player["position"]["id"]),
+                )
+            )
+
+        return Tournament(
+            tournament["id"],
+            teams,
+            players,
+            persons,
+        )

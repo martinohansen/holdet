@@ -153,7 +153,12 @@ class CachedLimiterSession(CacheMixin, LimiterMixin, requests.Session):
 
 
 class Client:
-    def __init__(self, base_url: str = "https://api.sofascore.com/api/v1") -> None:
+    def __init__(
+        self,
+        base_url: str = "https://api.sofascore.com/api/v1",
+        rate_limit: int = 1,
+        cache_ttl: timedelta = timedelta(days=300),
+    ) -> None:
         self.base_url = base_url
         self.headers = {
             "Content-Type": "application/json",
@@ -164,9 +169,9 @@ class Client:
         # Setup request cache and limiter to avoid hitting the API too often and
         # getting blocked
         self.http = CachedLimiterSession(
-            per_second=1,
+            per_second=rate_limit,
             bucket_class=MemoryListBucket,
-            expire_after=timedelta(days=300),
+            expire_after=cache_ttl,
             backend=FileCache(".sofascore_cache"),
         )
 

@@ -11,82 +11,60 @@ from holdet import holdet
 from sofascore import sofascore
 
 
-def _jaccard_similarity(str1: str, str2: str) -> float:
-    # Convert the strings to sets of characters
-    set1 = set(str1)
-    set2 = set(str2)
-
-    # Calculate the size of the intersection of the sets
-    intersection = set1 & set2
-    intersection_size = len(intersection)
-
-    # Calculate the size of the union of the sets
-    union = set1 | set2
-    union_size = len(union)
-
-    # Calculate the Jaccard similarity
-    similarity = intersection_size / union_size
-
-    return similarity
+@dataclass
+class HoldetCandidate:
+    player: holdet.Player
+    stats: list[holdet.Statistics]
 
 
-def _similarity(player: sofascore.Player, character: holdet.Character) -> float:
-    # Calculate the Jaccard similarity between the team name and the
-    # character's team name
-    team_similarity = _jaccard_similarity(player.team.name, character.team)
-
-    # Calculate the Jaccard similarity between the character name and the
-    # character's name
-    name_similarity = _jaccard_similarity(player.name, character.name)
-
-    # Calculate the overall similarity as the average of the team and
-    # name similarities
-    overall_similarity = (team_similarity + name_similarity) / 2
-
-    return overall_similarity
-
-
-def _find_closest_character(
-    player: sofascore.Player,
-    characters: list[holdet.Character],
-) -> holdet.Character:
-    max_similarity = 0.0
-    closest_match_idx = None
-
-    for character in characters:
-        # Read the similarity between the player and the character
-        similarity = _similarity(player, character)
-
-        # If the similarity is greater than the maximum similarity update the
-        # closest match
-        if similarity > max_similarity:
-            max_similarity = similarity
-            closest_match_idx = characters.index(character)
-
-    return characters[closest_match_idx]  #  type: ignore
+@dataclass
+class SofascoreCandidate:
+    player: sofascore.Player
+    stats: list[sofascore.Statistics]
 
 
 @dataclass
 class Candidate:
-    holdet_character: holdet.Character
-    sofascore_player: sofascore.Player
-    sofascore_stats: list[sofascore.Statistics]
+    holdet: HoldetCandidate
+    sofascore: SofascoreCandidate
+
+    # Whether the player is the captain or not
     captain: bool = False
 
     @property
     def name(self) -> str:
-        return self.holdet_character.name
+        return self.holdet.player.person.name
 
     @property
     def team(self) -> str:
-        return self.holdet_character.team
+        return self.holdet.player.team.name
+
+    @property
+    def emoji(self) -> str:
+        if self.captain:
+            return "👑"
+        if self.holdet.player.position == holdet.Position.KEEPER:
+            return "🧤"
+        return "⚽️"
 
     @property
     def similarity(self) -> float:
-        return _similarity(self.sofascore_player, self.holdet_character)
+        return _similarity(self.sofascore.player, self.holdet.player)
 
-    def growth(self, stat: sofascore.Statistics) -> float:
-        points = holdet.Points(self.holdet_character)
+    @property
+    def growths(self) -> list[float]:
+        return [stat.values.growth for stat in self.holdet.stats]
+
+    @property
+    def growthTotal(self) -> float:
+        return sum(stat.values.growth for stat in self.holdet.stats)
+
+    def xGrowth(self, stat) -> float:
+        # The argument type hint did not work because the module and class
+        # shares the same name. This works for now.
+        assert isinstance(stat, sofascore.Statistics)
+
+        points = holdet.Points(self.holdet.player.position)
         growth: float = 0
 
         # Goals and assists
@@ -124,50 +102,128 @@ class Candidate:
         return growth
 
     @property
-    def growthTotal(self) -> float:
-        return sum(self.growth(stat) for stat in self.sofascore_stats)
+    def xGrowths(self) -> list[float]:
+        return [self.xGrowth(stat) for stat in sorted(self.sofascore.stats)]
 
-    def xGrowth(self, alpha: float = 0.5) -> float:
+    @property
+    def xGrowthTotal(self) -> float:
+        return sum(self.xGrowth(stat) for stat in self.sofascore.stats)
+
+    def xGrowthPredict(self, alpha: float = 0.5) -> float:
         """
         Predict the growth for the next game using exponential moving average
         (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
         values give more weight to recent stats.
         """
         ema = 0.0
-        for i, stat in enumerate(sorted(self.sofascore_stats)):
+        for i, stat in enumerate(sorted(self.sofascore.stats)):
             if i == 0:
-                ema = self.growth(stat)
+                ema = self.xGrowth(stat)
             else:
-                ema = alpha * self.growth(stat) + (1 - alpha) * ema
+                ema = alpha * self.xGrowth(stat) + (1 - alpha) * ema
         return ema
 
-    def __eq__(self, __value: object) -> bool:
-        if isinstance(__value, Candidate):
-            return self.name == __value.name
-        if isinstance(__value, sofascore.Player):
-            return self.sofascore_player == __value
-        raise NotImplementedError
-
-    def __lt__(self, other):
-        return self.xGrowth() < other.xGrowth()
+    def __lt__(self, other: "Candidate"):
+        return self.xGrowthPredict() < other.xGrowthPredict()
 
     def __repr__(self) -> str:
-        # Find suitable emoji to identify player
-        if self.captain:
-            emoji = "👑"
-        if self.holdet_character.keeper:
-            emoji = "🧤"
-        emoji = "⚽️"
-
-        growth_list = [
-            f"{self.growth(stat) / 1000:.0f}K" for stat in sorted(self.sofascore_stats)
-        ]
+        xGrowth_list = [f"{growth / 1000:.0f}K" for growth in self.xGrowths]
+        growth_list = [f"{growth / 1000:.0f}K" for growth in self.growths]
         return (
-            f"{emoji} {self.name} ({self.team})"
-            f" xGrowth={self.xGrowth() / 1000:.2f}K"
-            f" growthTotal={self.growthTotal / 1000000:.2f}M"
-            f" ({', '.join(growth_list)})"
+            f"{self.emoji} {self.name} ({self.team}),"
+            f" xGrowthPredict={self.xGrowthPredict() / 1000:.0f}K,"
+            f" xGrowthTotal={self.xGrowthTotal / 1000000:.2f}M"
+            f" ({', '.join(xGrowth_list)}),"
+            f" growthTotal={self.growthTotal / 1000000:.2f}M ({', '.join(growth_list)})"
         )
+
+
+def _jaccard_similarity(str1: str, str2: str) -> float:
+    # Convert the strings to sets of characters
+    set1 = set(str1)
+    set2 = set(str2)
+
+    # Calculate the size of the intersection of the sets
+    intersection = set1 & set2
+    intersection_size = len(intersection)
+
+    # Calculate the size of the union of the sets
+    union = set1 | set2
+    union_size = len(union)
+
+    # Calculate the Jaccard similarity
+    similarity = intersection_size / union_size
+
+    return similarity
+
+
+def _similarity(s: sofascore.Player, h: holdet.Player) -> float:
+    team_similarity = _jaccard_similarity(s.team.name, h.team.name)
+    name_similarity = _jaccard_similarity(s.name, h.person.name)
+
+    # Calculate the overall similarity as the average of the team and
+    # name similarities
+    overall_similarity = (team_similarity + name_similarity) / 2
+
+    return overall_similarity
+
+
+def _find_closest_match(
+    s: SofascoreCandidate, holdet_candidates: list[HoldetCandidate]
+) -> HoldetCandidate:
+    max_similarity = 0.0
+    closest_match_idx = None
+
+    for h in holdet_candidates:
+        # Read the similarity between players
+        similarity = _similarity(s.player, h.player)
+
+        # If the similarity is greater than the maximum similarity update the
+        # closest match
+        if similarity > max_similarity:
+            max_similarity = similarity
+            closest_match_idx = holdet_candidates.index(h)
+
+    return holdet_candidates[closest_match_idx]  #  type: ignore
+
+
+def get_sofascore(tournament: sofascore.Tournament) -> list[SofascoreCandidate]:
+    client = sofascore.Client()
+
+    players: list[SofascoreCandidate] = []
+    for round in track(range(1, 36)):
+        for game in client.games(tournament, round):
+            lineup = client.lineup(game).all
+            for player, stats in lineup:
+                found = False
+                for p in players:
+                    if player == p.player:
+                        p.stats.append(stats)
+                        found = True
+                        break
+                if not found:
+                    players.append(SofascoreCandidate(player=player, stats=[stats]))
+
+    return players
+
+
+def get_holdet(game: holdet.Game) -> list[HoldetCandidate]:
+    client = holdet.Client()
+
+    # Use a dict for lookups to improve speed
+    players_dict: dict[int, HoldetCandidate] = {}
+    for round in track(client.rounds(game)):
+        stats = client.statistics(game, round)
+        for stat in stats:
+            player_id = stat.player.id
+            if player_id in players_dict:
+                players_dict[player_id].stats.append(stat)
+            else:
+                players_dict[player_id] = HoldetCandidate(
+                    player=stat.player, stats=[stat]
+                )
+
+    return list(players_dict.values())
 
 
 if __name__ == "__main__":
@@ -176,41 +232,25 @@ if __name__ == "__main__":
         level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
     )
 
-    h = holdet.Client()
-    characters = h.characters(
-        tournament_id=422,  # Premier League
-        game_id=644,  # 2022/2023 end of season
-        game_round=3,
+    holdet_candidates = get_holdet(
+        holdet.Game(
+            644,  # Spring 2023
+            422,  # Premier League
+        )
     )
-    pl = sofascore.Tournament(
-        17,  # Premier League
-        41886,  # 2022/2023
+    sofascore_candidates = get_sofascore(
+        sofascore.Tournament(
+            17,  # Premier League
+            41886,  # 2022/2023
+        )
     )
-    c = sofascore.Client()
 
     candidates: list[Candidate] = []
-    for round in track(range(1, 36)):
-        for game in c.games(pl, round):
-            players = c.lineup(game).all
-            for player, stats in players:
-                if player not in candidates:
-                    # Find and pop the closest character from the list. This is
-                    # to reduce the chance of matching sofascore and holdet
-                    # players wrongly.
-                    character = _find_closest_character(player, characters)
-                    characters.pop(characters.index(character))
+    for s in track(sofascore_candidates):
+        # Find the closest match in Holdet for the current Sofascore player and
+        # remove it from the list afterwards.
+        h = _find_closest_match(s, holdet_candidates)
+        holdet_candidates.remove(h)
+        candidates.append(Candidate(h, s))
 
-                    candidates.append(
-                        Candidate(
-                            holdet_character=character,
-                            sofascore_player=player,
-                            sofascore_stats=[stats],
-                        )
-                    )
-                else:
-                    for candidate in candidates:
-                        if candidate == player:
-                            candidate.sofascore_stats.append(stats)
-
-    print(sorted(candidates)[:10])
     print(sorted(candidates)[-10:])
