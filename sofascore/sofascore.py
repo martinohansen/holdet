@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 import requests
@@ -47,10 +47,10 @@ class Game:
     startTimestamp: int
 
     @property
-    def startTimestampHuman(self) -> str:
-        return datetime.fromtimestamp(self.startTimestamp).strftime("%Y-%m-%d %H:%M")
+    def start(self) -> datetime:
+        return datetime.fromtimestamp(self.startTimestamp, tz=timezone.utc)
 
-    def __lt__(self, other):
+    def __lt__(self, other: "Game"):
         return self.startTimestamp < other.startTimestamp
 
 

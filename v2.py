@@ -2,139 +2,215 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from rich import print
 from rich.logging import RichHandler
 from rich.progress import track
 
 from holdet import holdet
+from lp import lp
 from sofascore import sofascore
 
 
 @dataclass
-class HoldetCandidate:
+class Holdet:
     player: holdet.Player
     stats: list[holdet.Statistics]
 
 
 @dataclass
-class SofascoreCandidate:
+class Sofascore:
     player: sofascore.Player
     stats: list[sofascore.Statistics]
 
 
 @dataclass
-class Candidate:
-    holdet: HoldetCandidate
-    sofascore: SofascoreCandidate
+class Round:
+    number: int
+    values: holdet.Values
+    stats: list[sofascore.Statistics]
+    position: holdet.Position
 
-    # Whether the player is the captain or not
-    captain: bool = False
+    @property
+    def xGrowth(self) -> float:
+        growth: float = 0
+
+        # The points vary depending on the position
+        points = holdet.Points(self.position)
+
+        for stat in self.stats:
+            # Goals and assists
+            growth += points.goal * stat.expectedGoals
+            growth += points.assist * stat.expectedAssists
+            growth += points.shot_on_goal * stat.onTargetScoringAttempt
+
+            # Decisive goals
+            growth += points.scoring_victory * stat.decisive_goal_for_win
+            growth += points.scoring_draw * stat.decisive_goal_for_draw
+
+            # Fair play
+            # growth += points.yellow_card * stat.yellowCard
+            # growth += -50000 * self.xRed
+
+            # # Team performance
+            growth += points.team_win * stat.win
+            growth += points.team_draw * stat.draw
+            growth += points.team_loss * stat.loss
+            growth += points.team_score * stat.team_goals
+            growth += points.opponent_score * stat.team_goals_conceded
+            growth += points.away_win if stat.side == "away" and stat.win else 0
+            growth += points.home_loss if stat.side == "home" and stat.loss else 0
+
+            # # Special
+            growth += points.clean_sheet if stat.clean_sheet else 0
+            growth += points.on_field if stat.minutesPlayed != 0 else 0
+            growth += points.off_field if stat.minutesPlayed == 0 else 0
+            growth += points.hattrick if stat.expectedGoals >= 3 else 0
+
+        # Finance
+        # TODO Implement this in the candidate class
+        # if self.captain:
+        #    growth = growth * 2
+
+        return growth
+
+    @property
+    def diff(self) -> float:
+        return self.xGrowth - self.values.growth
+
+    def __lt__(self, other: "Round") -> bool:
+        return self.number < other.number
+
+    def __repr__(self) -> str:
+        return (
+            f"Round(number={self.number}, games={len(self.stats)},"
+            f" growth={self.values.growth / 1000:.0f}K,"
+            f" xGrowth={self.xGrowth / 1000:.0f}K,"
+            f" diff={self.diff / 1000:+.0f}K)"
+        )
+
+
+@dataclass
+class Candidate:
+    avatar: Holdet  # Avatar is the player from the game
+    person: Sofascore  # Person is the player from real world
+
+    captain: bool = False  # Whether the player is the captain or not
+    on_team: bool = False  # Whether the player is on the team or not
 
     @property
     def name(self) -> str:
-        return self.holdet.player.person.name
+        return self.avatar.player.person.name
 
     @property
     def team(self) -> str:
-        return self.holdet.player.team.name
+        return self.avatar.player.team.name
+
+    @property
+    def value(self) -> int:
+        return self.rounds[-1].values.value
+
+    @property
+    def keeper(self) -> bool:
+        return self.avatar.player.position == holdet.Position.KEEPER
+
+    @property
+    def defense(self) -> bool:
+        return self.avatar.player.position == holdet.Position.DEFENSE
+
+    @property
+    def midfielder(self) -> bool:
+        return self.avatar.player.position == holdet.Position.MIDFIELDER
+
+    @property
+    def forward(self) -> bool:
+        return self.avatar.player.position == holdet.Position.FORWARD
+
+    @property
+    def transfer_fee(self) -> float:
+        """Transfer fee is 1% of the value"""
+        if self.on_team:
+            return 0.0
+        else:
+            return self.value * 0.01
+
+    @property
+    def price(self) -> float:
+        return self.value + self.transfer_fee
 
     @property
     def emoji(self) -> str:
         if self.captain:
             return "👑"
-        if self.holdet.player.position == holdet.Position.KEEPER:
+        if self.avatar.player.position == holdet.Position.KEEPER:
             return "🧤"
         return "⚽️"
 
     @property
     def similarity(self) -> float:
-        return _similarity(self.sofascore.player, self.holdet.player)
+        return _similarity(self.person.player, self.avatar.player)
 
     @property
-    def growths(self) -> list[float]:
-        return [stat.values.growth for stat in self.holdet.stats]
+    def rounds(self) -> list[Round]:
+        """
+        Zip the statistics from the avatar and the person together. Every stat
+        that is within the same round is zipped together. Only include rounds
+        that have ended.
+        """
 
-    @property
-    def growthTotal(self) -> float:
-        return sum(stat.values.growth for stat in self.holdet.stats)
+        def zip(stat: holdet.Statistics) -> Round:
+            return Round(
+                number=stat.round.number,
+                values=stat.values,
+                stats=[
+                    s
+                    for s in self.person.stats
+                    if stat.round.start <= s.game.start <= stat.round.end
+                ],
+                position=stat.player.position,
+            )
 
-    def xGrowth(self, stat) -> float:
-        # The argument type hint did not work because the module and class
-        # shares the same name. This works for now.
-        assert isinstance(stat, sofascore.Statistics)
+        return [
+            zip(stat)
+            for stat in self.avatar.stats
+            if stat.round.end < datetime.now(tz=timezone.utc)
+        ]
 
-        points = holdet.Points(self.holdet.player.position)
-        growth: float = 0
-
-        # Goals and assists
-        growth += points.goal * stat.expectedGoals
-        growth += points.assist * stat.expectedAssists
-        growth += points.shot_on_goal * stat.onTargetScoringAttempt
-
-        # Decisive goals
-        growth += points.scoring_victory * stat.decisive_goal_for_win
-        growth += points.scoring_draw * stat.decisive_goal_for_draw
-
-        # Fair play
-        # growth += points.yellow_card * stat.yellowCard
-        # growth += -50000 * self.xRed
-
-        # # Team performance
-        growth += points.team_win * stat.win
-        growth += points.team_draw * stat.draw
-        growth += points.team_loss * stat.loss
-        growth += points.team_score * stat.team_goals
-        growth += points.opponent_score * stat.team_goals_conceded
-        growth += points.away_win if stat.side == "away" and stat.win else 0
-        growth += points.home_loss if stat.side == "home" and stat.loss else 0
-
-        # # Special
-        growth += points.clean_sheet if stat.clean_sheet else 0
-        growth += points.on_field if stat.minutesPlayed != 0 else 0
-        growth += points.off_field if stat.minutesPlayed == 0 else 0
-        growth += points.hattrick if stat.expectedGoals >= 3 else 0
-
-        # Finance
-        if self.captain:
-            growth = growth * 2
-
-        return growth
-
-    @property
-    def xGrowths(self) -> list[float]:
-        return [self.xGrowth(stat) for stat in sorted(self.sofascore.stats)]
-
-    @property
-    def xGrowthTotal(self) -> float:
-        return sum(self.xGrowth(stat) for stat in self.sofascore.stats)
-
-    def xGrowthPredict(self, alpha: float = 0.5) -> float:
+    def xGrowthEMA(self, alpha: float) -> float:
         """
         Predict the growth for the next game using exponential moving average
         (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
         values give more weight to recent stats.
         """
         ema = 0.0
-        for i, stat in enumerate(sorted(self.sofascore.stats)):
+        for i, round in enumerate(sorted(self.rounds)):
             if i == 0:
-                ema = self.xGrowth(stat)
+                ema = round.xGrowth
             else:
-                ema = alpha * self.xGrowth(stat) + (1 - alpha) * ema
+                ema = alpha * round.xGrowth + (1 - alpha) * ema
         return ema
 
+    @property
+    def xGrowth(self) -> float:
+        return self.xGrowthEMA(0.5)
+
+    def __hash__(self):
+        return hash(tuple(self.name))
+
+    def __eq__(self, other: object):
+        if not isinstance(other, Candidate):
+            return NotImplemented
+        return self.name == other.name
+
     def __lt__(self, other: "Candidate"):
-        return self.xGrowthPredict() < other.xGrowthPredict()
+        return self.xGrowth < other.xGrowth
 
     def __repr__(self) -> str:
-        xGrowth_list = [f"{growth / 1000:.0f}K" for growth in self.xGrowths]
-        growth_list = [f"{growth / 1000:.0f}K" for growth in self.growths]
         return (
             f"{self.emoji} {self.name} ({self.team}),"
-            f" xGrowthPredict={self.xGrowthPredict() / 1000:.0f}K,"
-            f" xGrowthTotal={self.xGrowthTotal / 1000000:.2f}M"
-            f" ({', '.join(xGrowth_list)}),"
-            f" growthTotal={self.growthTotal / 1000000:.2f}M ({', '.join(growth_list)})"
+            f" xGrowth={self.xGrowth / 1000:.0f}K,"
+            f" rounds={self.rounds}"
         )
 
 
@@ -168,9 +244,7 @@ def _similarity(s: sofascore.Player, h: holdet.Player) -> float:
     return overall_similarity
 
 
-def _find_closest_match(
-    s: SofascoreCandidate, holdet_candidates: list[HoldetCandidate]
-) -> HoldetCandidate:
+def _find_closest_match(s: Sofascore, holdet_candidates: list[Holdet]) -> Holdet:
     max_similarity = 0.0
     closest_match_idx = None
 
@@ -187,11 +261,11 @@ def _find_closest_match(
     return holdet_candidates[closest_match_idx]  #  type: ignore
 
 
-def get_sofascore(tournament: sofascore.Tournament) -> list[SofascoreCandidate]:
+def get_sofascore(tournament: sofascore.Tournament) -> list[Sofascore]:
     client = sofascore.Client()
 
-    players: list[SofascoreCandidate] = []
-    for round in track(range(1, 36)):
+    players: list[Sofascore] = []
+    for round in track(range(1, 37)):
         for game in client.games(tournament, round):
             lineup = client.lineup(game).all
             for player, stats in lineup:
@@ -202,16 +276,16 @@ def get_sofascore(tournament: sofascore.Tournament) -> list[SofascoreCandidate]:
                         found = True
                         break
                 if not found:
-                    players.append(SofascoreCandidate(player=player, stats=[stats]))
+                    players.append(Sofascore(player=player, stats=[stats]))
 
     return players
 
 
-def get_holdet(game: holdet.Game) -> list[HoldetCandidate]:
+def get_holdet(game: holdet.Game) -> list[Holdet]:
     client = holdet.Client()
 
     # Use a dict for lookups to improve speed
-    players_dict: dict[int, HoldetCandidate] = {}
+    players_dict: dict[int, Holdet] = {}
     for round in track(client.rounds(game)):
         stats = client.statistics(game, round)
         for stat in stats:
@@ -219,9 +293,7 @@ def get_holdet(game: holdet.Game) -> list[HoldetCandidate]:
             if player_id in players_dict:
                 players_dict[player_id].stats.append(stat)
             else:
-                players_dict[player_id] = HoldetCandidate(
-                    player=stat.player, stats=[stat]
-                )
+                players_dict[player_id] = Holdet(player=stat.player, stats=[stat])
 
     return list(players_dict.values())
 
@@ -253,4 +325,4 @@ if __name__ == "__main__":
         holdet_candidates.remove(h)
         candidates.append(Candidate(h, s))
 
-    print(sorted(candidates)[-10:])
+    print(lp.find_optimal_team(candidates, 70 * 1000000))
