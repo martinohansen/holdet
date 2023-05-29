@@ -1,12 +1,11 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 
 import requests
-from pyrate_limiter import MemoryListBucket
-from requests_cache import CacheMixin, FileCache
-from requests_ratelimiter import LimiterMixin
+
+from util import util
 
 
 @dataclass
@@ -148,16 +147,10 @@ class Lineup:
         return self.home + self.away
 
 
-class CachedLimiterSession(CacheMixin, LimiterMixin, requests.Session):
-    pass
-
-
 class Client:
     def __init__(
         self,
         base_url: str = "https://api.sofascore.com/api/v1",
-        rate_limit: int = 1,
-        cache_ttl: timedelta = timedelta(days=300),
     ) -> None:
         self.base_url = base_url
         self.headers = {
@@ -168,12 +161,7 @@ class Client:
 
         # Setup request cache and limiter to avoid hitting the API too often and
         # getting blocked
-        self.http = CachedLimiterSession(
-            per_second=rate_limit,
-            bucket_class=MemoryListBucket,
-            expire_after=cache_ttl,
-            backend=FileCache(".sofascore_cache"),
-        )
+        self.http = util.CachedLimiterSession.new(".sofascore_cache")
 
     def _get(self, endpoint, params=None):
         url = self.base_url + endpoint

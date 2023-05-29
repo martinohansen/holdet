@@ -1,3 +1,4 @@
+import copy
 import logging
 from typing import Protocol, Sequence
 
@@ -48,6 +49,10 @@ class Candidate(Protocol):
         ...
 
     @property
+    def value(self) -> float:
+        ...
+
+    @property
     def xValue(self) -> float:
         ...
 
@@ -58,11 +63,17 @@ class Candidate(Protocol):
         ...
 
 
-def find_optimal_team(candidates: Sequence[Candidate], budget: int) -> list[Candidate]:
+def find_optimal_team(candidates: Sequence[Candidate], budget: int):
     """
     Takes a list of candidates and returns the 11 candidates that maximize the
     combined value within the rules of the game.
     """
+    # Add the captain variant of candidate to the list of candidates
+    captain_variant = [copy.deepcopy(c) for c in candidates]
+    for c in captain_variant:
+        c.captain = True
+    candidates = list(candidates) + captain_variant
+
     # Create a linear programming problem
     problem = LpProblem("OptimalTeam", LpMaximize)
 
@@ -123,16 +134,11 @@ def find_optimal_team(candidates: Sequence[Candidate], budget: int) -> list[Cand
     # Solve the problem
     problem.writeLP("problem.lp")
     status = problem.solve(PULP_CBC_CMD(msg=0))
-    logging.info(f"LpStatus: {LpStatus[status]}")
+    logging.debug(f"LpStatus: {LpStatus[status]}")
 
     # Iterate through the selected candidates and add them to the optimal team
     optimal_team = []
     for candidate in candidates:
-        # If the variable for the baller is non-zero its been selected
-        try:
-            if value(variables[candidate.id, candidate.captain]) > 0:
-                optimal_team.append(candidate)
-        except TypeError:
-            logging.error(f"TypeError: {candidate}")
-
+        if value(variables[candidate.id, candidate.captain]) > 0:
+            optimal_team.append(candidate)
     return optimal_team

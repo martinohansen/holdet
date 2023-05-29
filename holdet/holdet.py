@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-import requests
+from util import util
 
 
 @dataclass
@@ -132,7 +132,7 @@ class Points:
 class Client:
     def __init__(self, base_url: str = "https://api.holdet.dk") -> None:
         self.base_url = base_url
-        self.http = requests.Session()
+        self.http = util.CachedLimiterSession.new(".holdet_cache")
 
         self._params: str = "?appid=holdet"
         self.headers = {

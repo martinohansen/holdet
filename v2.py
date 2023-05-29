@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
-import copy
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from rich import print
+from rich.console import Console
 from rich.logging import RichHandler
-from rich.progress import track
+from rich.table import Table
 
 from holdet import holdet
 from lp import lp
@@ -218,6 +218,49 @@ class Candidate:
         )
 
 
+class Formation:
+    def __init__(self, solution: list[Candidate]):
+        self.position: dict[str, list[Candidate]] = {
+            "keeper": [],
+            "defenses": [],
+            "midfielders": [],
+            "forwards": [],
+        }
+        self._populate(solution)
+
+    def _populate(self, solution: list[Candidate]):
+        for player in solution:
+            if player.keeper:
+                self.position["keeper"].append(player)
+            if player.defense:
+                self.position["defenses"].append(player)
+            if player.midfielder:
+                self.position["midfielders"].append(player)
+            if player.forward:
+                self.position["forwards"].append(player)
+
+    def __iter__(self):
+        return iter(self.position.items())
+
+    def __repr__(self) -> str:
+        return f"{len(self.position['defenses'])}-{len(self.position['midfielders'])}-{len(self.position['forwards'])}"
+
+    def __rich__(self) -> Table:
+        table = Table(title=f"XI ({self})")
+        table.add_column("Position")
+        table.add_column("Players")
+        for index, (position, players) in enumerate(self):
+            for player in players:
+                table.add_row(position.capitalize(), str(player))
+                position = ""  # Avoid repeating the position name in the same row
+
+            # Add an empty row between positions
+            if index < 3:
+                table.add_row()
+
+        return table
+
+
 def _jaccard_similarity(str1: str, str2: str) -> float:
     # Convert the strings to sets of characters
     set1 = set(str1)
@@ -269,7 +312,7 @@ def get_sofascore(tournament: sofascore.Tournament) -> list[Sofascore]:
     client = sofascore.Client()
 
     players: list[Sofascore] = []
-    for round in track(range(1, 37)):
+    for round in range(1, 37):
         for game in client.games(tournament, round):
             lineup = client.lineup(game).all
             for player, stats in lineup:
@@ -290,7 +333,7 @@ def get_holdet(game: holdet.Game) -> list[Holdet]:
 
     # Use a dict for lookups to improve speed
     players_dict: dict[int, Holdet] = {}
-    for round in track(client.rounds(game)):
+    for round in client.rounds(game):
         stats = client.statistics(game, round)
         for stat in stats:
             player_id = stat.player.id
@@ -307,33 +350,33 @@ if __name__ == "__main__":
     logging.basicConfig(
         level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
     )
+    console = Console()
 
-    holdet_candidates = get_holdet(
-        holdet.Game(
-            644,  # Spring 2023
-            422,  # Premier League
+    with console.status("Fetching data...") as status:
+        holdet_candidates = get_holdet(
+            holdet.Game(
+                644,  # Spring 2023
+                422,  # Premier League
+            )
         )
-    )
-    sofascore_candidates = get_sofascore(
-        sofascore.Tournament(
-            17,  # Premier League
-            41886,  # 2022/2023
+        status.console.log(f"Found {len(holdet_candidates)} players on Holdet")
+        sofascore_candidates = get_sofascore(
+            sofascore.Tournament(
+                17,  # Premier League
+                41886,  # 2022/2023
+            )
         )
-    )
+        candidates: list[Candidate] = []
+        for s in sofascore_candidates:
+            # Find the closest match in Holdet for the current Sofascore player and
+            # remove it from the list afterwards.
+            h = _find_closest_match(s, holdet_candidates)
+            holdet_candidates.remove(h)
+            candidates.append(Candidate(h, s))
+        status.console.log(f"Found {len(candidates)} players on Sofascore")
 
-    candidates: list[Candidate] = []
-    for s in track(sofascore_candidates):
-        # Find the closest match in Holdet for the current Sofascore player and
-        # remove it from the list afterwards.
-        h = _find_closest_match(s, holdet_candidates)
-        holdet_candidates.remove(h)
-        candidates.append(Candidate(h, s))
+    with console.status("Finding optimal team..."):
+        solution = lp.find_optimal_team(candidates, 70 * 1000000)
+        status.console.log(f"Found optimal 11 out of {len(candidates)} players")
 
-    # Add the captain variant of candidate to the list of candidates
-    captain_variant = [copy.deepcopy(c) for c in candidates]
-    for c in captain_variant:
-        c.captain = True
-    candidates = candidates + captain_variant
-
-    solution = lp.find_optimal_team(candidates, 70 * 1000000)
-    print(solution)
+    print(Formation(solution))
