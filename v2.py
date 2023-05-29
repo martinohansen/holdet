@@ -68,11 +68,6 @@ class Round:
             growth += points.off_field if stat.minutesPlayed == 0 else 0
             growth += points.hattrick if stat.expectedGoals >= 3 else 0
 
-        # Finance
-        # TODO Implement this in the candidate class
-        # if self.captain:
-        #    growth = growth * 2
-
         return growth
 
     @property
@@ -98,6 +93,10 @@ class Candidate:
 
     captain: bool = False  # Whether the player is the captain or not
     on_team: bool = False  # Whether the player is on the team or not
+
+    @property
+    def id(self) -> int:
+        return self.avatar.player.id
 
     @property
     def name(self) -> str:
@@ -143,8 +142,6 @@ class Candidate:
     def emoji(self) -> str:
         if self.captain:
             return "👑"
-        if self.avatar.player.position == holdet.Position.KEEPER:
-            return "🧤"
         return "⚽️"
 
     @property
@@ -193,24 +190,30 @@ class Candidate:
 
     @property
     def xGrowth(self) -> float:
+        if self.captain:
+            return self.xGrowthEMA(0.5) * 2
         return self.xGrowthEMA(0.5)
 
-    def __hash__(self):
-        return hash(tuple(self.name))
+    @property
+    def xValue(self) -> float:
+        return self.value + self.xGrowth
 
     def __eq__(self, other: object):
         if not isinstance(other, Candidate):
             return NotImplemented
-        return self.name == other.name
+        return self.id == other.id
 
     def __lt__(self, other: "Candidate"):
         return self.xGrowth < other.xGrowth
 
+    def __hash__(self):
+        return hash(self.avatar.player.person)
+
     def __repr__(self) -> str:
         return (
             f"{self.emoji} {self.name} ({self.team}),"
-            f" xGrowth={self.xGrowth / 1000:.0f}K,"
-            f" rounds={self.rounds}"
+            f" value={self.value / 1000000:.1f}M, xGrowth={self.xGrowth / 1000:.0f}K"
+            # f" rounds={self.rounds}"
         )
 
 
@@ -325,4 +328,5 @@ if __name__ == "__main__":
         holdet_candidates.remove(h)
         candidates.append(Candidate(h, s))
 
-    print(lp.find_optimal_team(candidates, 70 * 1000000))
+    solution = lp.find_optimal_team(candidates, 70 * 1000000)
+    print(solution)

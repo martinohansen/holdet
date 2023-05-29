@@ -1,11 +1,12 @@
-import copy
-from typing import Protocol
+import logging
+from typing import Protocol, Sequence
 
 from pulp import (  # type: ignore
     PULP_CBC_CMD,
     LpInteger,
     LpMaximize,
     LpProblem,
+    LpStatus,
     LpVariable,
     value,
 )
@@ -13,6 +14,10 @@ from pulp import (  # type: ignore
 
 class Candidate(Protocol):
     captain: bool
+
+    @property
+    def id(self) -> int:
+        ...
 
     @property
     def name(self) -> str:
@@ -39,11 +44,11 @@ class Candidate(Protocol):
         ...
 
     @property
-    def xGrowth(self) -> float:
+    def price(self) -> float:
         ...
 
     @property
-    def price(self) -> float:
+    def xValue(self) -> float:
         ...
 
     def __eq__(self, other: object) -> bool:
@@ -53,16 +58,16 @@ class Candidate(Protocol):
         ...
 
 
-def find_optimal_team(candidates: list[Candidate], budget: int) -> list[Candidate]:
+def find_optimal_team(candidates: Sequence[Candidate], budget: int) -> list[Candidate]:
     """
     Takes a list of candidates and returns the 11 candidates that maximize the
     combined value within the rules of the game.
     """
-    # Add the captain variant of each baller to the list of ballers
-    captain_variant = copy.deepcopy(candidates)
-    for c in captain_variant:
-        c.captain = True
-    candidates = candidates + captain_variant
+    # Add the captain variant of candidate to the list of candidates
+    # captain_variant = [copy.deepcopy(c) for c in candidates]
+    # for c in captain_variant:
+    #     c.captain = True
+    # candidates = candidates + captain_variant
 
     # Create a linear programming problem
     problem = LpProblem("OptimalTeam", LpMaximize)
@@ -73,19 +78,19 @@ def find_optimal_team(candidates: list[Candidate], budget: int) -> list[Candidat
     # Create a variable for each candidate. The variable is an integer between 0
     # and 1 where 1 means selected and 0 means not selected.
     for candidate in candidates:
-        identifier = f"{candidate.name}_{str(candidate.captain)}"
+        identifier = f"{candidate.id}_{int(candidate.captain)}"
         variables[candidate] = LpVariable(identifier, 0, 1, LpInteger)
+
+    # Set the objective function to maximize the combined xGrowth of the team
+    problem += sum(variables[c] * c.xValue for c in candidates)
 
     # Add the constraint that no two identical candidates can be selected
     for candidate in candidates:
-        problem += sum(variables[c] for c in candidates if c == candidate) <= 1
+        problem += sum(variables[c] for c in candidates if c.id == candidate.id) <= 1
 
     # Add the constraint that only 4 candidates from the same team is allowed
     for team in set(candidate.team for candidate in candidates):
         problem += sum(variables[c] for c in candidates if c.team == team) <= 4
-
-    # Set the objective function to maximize the combined xGrowth of the team
-    problem += sum(variables[c] * c.xGrowth for c in candidates)
 
     # Add the constraint that the price must be less than or equal to the budget
     problem += sum(variables[c] * c.price for c in candidates) <= budget
@@ -94,7 +99,7 @@ def find_optimal_team(candidates: list[Candidate], budget: int) -> list[Candidat
     problem += sum(variables[c] for c in candidates) == 11
 
     # Add the constraint that there must be exactly 1 captain on the team
-    problem += sum(variables[c] for c in candidates if c.captain) == 1
+    # problem += sum(variables[c] for c in candidates if c.captain) == 1
 
     # Add the constraint that there must be exactly 1 keeper
     problem += sum(variables[c] for c in candidates if c.keeper) == 1
@@ -112,13 +117,18 @@ def find_optimal_team(candidates: list[Candidate], budget: int) -> list[Candidat
     problem += sum(variables[c] for c in candidates if c.forward) <= 3
 
     # Solve the problem
-    problem.solve(PULP_CBC_CMD(msg=0))
+    problem.writeLP("problem.lp")
+    status = problem.solve(PULP_CBC_CMD(msg=0))
+    logging.info(f"LpStatus: {LpStatus[status]}")
 
     # Iterate through the selected candidates and add them to the optimal team
     optimal_team = []
     for candidate in candidates:
         # If the variable for the baller is non-zero its been selected
-        if value(variables[candidate]) > 0:
-            optimal_team.append(candidate)
+        try:
+            if value(variables[candidate]) > 0:
+                optimal_team.append(candidate)
+        except TypeError:
+            logging.error(f"TypeError: {candidate}")
 
     return optimal_team

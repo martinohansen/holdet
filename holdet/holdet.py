@@ -19,7 +19,7 @@ class Team:
     slug: str
 
 
-@dataclass
+@dataclass(frozen=True)  # Makes the class hashable
 class Person:
     id: int
     first_name: str
