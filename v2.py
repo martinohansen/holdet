@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import copy
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -327,6 +328,12 @@ if __name__ == "__main__":
         h = _find_closest_match(s, holdet_candidates)
         holdet_candidates.remove(h)
         candidates.append(Candidate(h, s))
+
+    # Add the captain variant of candidate to the list of candidates
+    captain_variant = [copy.deepcopy(c) for c in candidates]
+    for c in captain_variant:
+        c.captain = True
+    candidates = candidates + captain_variant
 
     solution = lp.find_optimal_team(candidates, 70 * 1000000)
     print(solution)
