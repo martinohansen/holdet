@@ -5,7 +5,7 @@ from enum import Enum
 
 import requests
 
-from util import util
+from . import util
 
 
 @dataclass

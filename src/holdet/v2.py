@@ -13,8 +13,7 @@ from sklearn.linear_model import LinearRegression  # type: ignore
 from sklearn.metrics import mean_squared_error  # type: ignore
 from sklearn.model_selection import train_test_split  # type: ignore
 
-from holdet import holdet
-from sofascore import sofascore
+from holdet.data import holdet, sofascore
 
 
 @dataclass
@@ -352,7 +351,7 @@ def get_holdet(game: holdet.Game) -> list[Holdet]:
     return list(players_dict.values())
 
 
-if __name__ == "__main__":
+def main():
     # Setup logger with Rich formatting
     logging.basicConfig(
         level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
