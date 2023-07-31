@@ -114,6 +114,28 @@ class Statistics:
     # TODO: We need to read yellow and red cards from the incident call:
     # https://api.sofascore.com/api/v1/event/11227333/incidents
 
+    @property
+    def features(self) -> dict:
+        return {
+            "assists": self.assists,
+            "expectedAssists": self.expectedAssists,
+            "expectedGoals": self.expectedGoals,
+            "goals": self.goals,
+            "goalsPrevented": self.goalsPrevented,
+            "minutesPlayed": self.minutesPlayed,
+            "onTargetScoringAttempt": self.onTargetScoringAttempt,
+            "savedShotsFromInsideTheBox": self.savedShotsFromInsideTheBox,
+            "saves": self.saves,
+            "team_goals": self.team_goals,
+            "team_goals_conceded": self.team_goals_conceded,
+            "win": int(self.win),
+            "loss": int(self.loss),
+            "draw": int(self.draw),
+            "clean_sheet": int(self.clean_sheet),
+            "decisive_goal_for_draw": int(self.decisive_goal_for_draw),
+            "decisive_goal_for_win": int(self.decisive_goal_for_win),
+        }
+
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)

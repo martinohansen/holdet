@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import numpy as np
+import pandas as pd
 from rich import print
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
+from sklearn.linear_model import LinearRegression  # type: ignore
+from sklearn.metrics import mean_squared_error  # type: ignore
+from sklearn.model_selection import train_test_split  # type: ignore
 
 from holdet import holdet
-from lp import lp
 from sofascore import sofascore
 
 
@@ -72,8 +75,12 @@ class Round:
         return growth
 
     @property
+    def growth(self) -> int:
+        return self.values.growth
+
+    @property
     def diff(self) -> float:
-        return self.xGrowth - self.values.growth
+        return self.xGrowth - self.growth
 
     def __lt__(self, other: "Round") -> bool:
         return self.number < other.number
@@ -375,8 +382,42 @@ if __name__ == "__main__":
             candidates.append(Candidate(h, s))
         status.console.log(f"Found {len(candidates)} players on Sofascore")
 
-    with console.status("Finding optimal team..."):
-        solution = lp.find_optimal_team(candidates, 70 * 1000000)
-        status.console.log(f"Found optimal 11 out of {len(candidates)} players")
+    # Extract and flatten the data
+    data = []
+    for candidate in candidates:
+        for round in candidate.rounds:
+            for stat in round.stats:
+                row = {
+                    "id": candidate.id,
+                    "round": round.number,
+                }
+                row.update(stat.features)
+                row.update({"growth": round.growth})
+                data.append(row)
 
-    print(Formation(solution))
+    # Create a pandas DataFrame
+    df = pd.DataFrame(data)
+
+    # Define features (X) and target (y)
+    X = df.iloc[:, :-1]
+    y = df.iloc[:, -1]
+
+    # Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y)
+
+    # Create and fit the model
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred = model.predict(X_test)
+
+    # Evaluate the model
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    print("Root Mean Squared Error:", rmse)
+
+    # with console.status("Finding optimal team..."):
+    #     solution = lp.find_optimal_team(candidates, 70 * 1000000)
+    #     status.console.log(f"Found optimal 11 out of {len(candidates)} players")
+
+    # print(Formation(solution))
