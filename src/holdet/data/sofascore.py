@@ -116,6 +116,10 @@ class Statistics:
 
     @property
     def features(self) -> dict:
+        """
+        Return a dictionary with all the features that can be used to train a
+        model.
+        """
         return {
             "assists": self.assists,
             "expectedAssists": self.expectedAssists,
@@ -134,6 +138,11 @@ class Statistics:
             "clean_sheet": int(self.clean_sheet),
             "decisive_goal_for_draw": int(self.decisive_goal_for_draw),
             "decisive_goal_for_win": int(self.decisive_goal_for_win),
+            # Knowing the opponent is important for the model to learn how to
+            # predict the outcome of a game.
+            "opponent": self.game.away.id
+            if self.side == Side.HOME
+            else self.game.home.id,
         }
 
     def __init__(self, **kwargs):

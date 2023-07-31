@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from rich import print
-from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 from sklearn.linear_model import LinearRegression  # type: ignore
@@ -14,6 +13,9 @@ from sklearn.metrics import mean_squared_error  # type: ignore
 from sklearn.model_selection import train_test_split  # type: ignore
 
 from holdet.data import holdet, sofascore
+from holdet.solver import lp
+
+from . import campaigns
 
 
 @dataclass
@@ -181,29 +183,36 @@ class Candidate:
             if stat.round.end < datetime.now(tz=timezone.utc)
         ]
 
-    def xGrowthEMA(self, alpha: float) -> float:
+    def df(self, train: bool = False) -> pd.DataFrame:
         """
-        Predict the growth for the next game using exponential moving average
-        (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
-        values give more weight to recent stats.
+        Return a data frame with features for all rounds. Include the actual
+        growth if train is True.
         """
-        ema = 0.0
-        for i, round in enumerate(sorted(self.rounds)):
-            if i == 0:
-                ema = round.xGrowth
-            else:
-                ema = alpha * round.xGrowth + (1 - alpha) * ema
-        return ema
+        data = []
+        for round in self.rounds:
+            row = {
+                "id": self.id,
+                "round": round.number,
+            }
 
-    @property
-    def xGrowth(self) -> float:
-        if self.captain:
-            return self.xGrowthEMA(0.5) * 2
-        return self.xGrowthEMA(0.5)
+            # If the candidate has no stats for the round, skip it
+            if len(round.stats) == 0:
+                continue
 
-    @property
-    def xValue(self) -> float:
-        return self.value + self.xGrowth
+            # Sum stats from multiple stats in the same round, this can
+            # happen as some rounds have multiple games for some teams.
+            for stat in round.stats:
+                for key, value in stat.features.items():
+                    if key in row:
+                        row[key] += value
+                    else:
+                        row[key] = value
+
+            if train:
+                row.update({"growth": round.growth})
+
+            data.append(row)
+        return pd.DataFrame(data)
 
     def __eq__(self, other: object):
         if not isinstance(other, Candidate):
@@ -211,27 +220,26 @@ class Candidate:
         return self.id == other.id
 
     def __lt__(self, other: "Candidate"):
-        return self.xGrowth < other.xGrowth
+        return self.value < other.value
 
     def __hash__(self):
         return hash(self.avatar.player.person)
 
     def __repr__(self) -> str:
         return (
-            f"{self.emoji} {self.name} ({self.team}),"
-            f" value={self.value / 1000000:.1f}M, xGrowth={self.xGrowth / 1000:.0f}K"
-            # f" rounds={self.rounds}"
+            f"{self.emoji} {self.name} ({self.team}), value={self.value / 1000000:.1f}M"
         )
 
 
 class Formation:
-    def __init__(self, solution: list[Candidate]):
+    def __init__(self, solution: list[Candidate], evaluator: lp.Evaluator):
         self.position: dict[str, list[Candidate]] = {
             "keeper": [],
             "defenses": [],
             "midfielders": [],
             "forwards": [],
         }
+        self.evaluator = evaluator
         self._populate(solution)
 
     def _populate(self, solution: list[Candidate]):
@@ -249,16 +257,29 @@ class Formation:
         return iter(self.position.items())
 
     def __repr__(self) -> str:
-        return f"{len(self.position['defenses'])}-{len(self.position['midfielders'])}-{len(self.position['forwards'])}"
+        return (
+            f"{len(self.position['defenses'])}-"
+            f"{len(self.position['midfielders'])}-"
+            f"{len(self.position['forwards'])}"
+        )
 
     def __rich__(self) -> Table:
-        table = Table(title=f"XI ({self})")
+        table = Table(title=f"\nXI ({self})")
         table.add_column("Position")
         table.add_column("Players")
+        table.add_column("xGrowth", justify="right")
         for index, (position, players) in enumerate(self):
             for player in players:
-                table.add_row(position.capitalize(), str(player))
-                position = ""  # Avoid repeating the position name in the same row
+                # Calculate the xGrowth using the evaluator to show in the
+                # output what the model predicts.
+                xGrowth = self.evaluator(player) - player.value
+
+                table.add_row(
+                    position.capitalize(), str(player), f"{xGrowth / 1000:.0f}K"
+                )
+
+                # Avoid repeating the position name in the same row
+                position = ""
 
             # Add an empty row between positions
             if index < 3:
@@ -311,93 +332,109 @@ def _find_closest_match(s: Sofascore, holdet_candidates: list[Holdet]) -> Holdet
             max_similarity = similarity
             closest_match_idx = holdet_candidates.index(h)
 
-    return holdet_candidates[closest_match_idx]  #  type: ignore
+    if closest_match_idx is None:
+        raise ValueError("No match found")
+    return holdet_candidates[closest_match_idx]
 
 
-def get_sofascore(tournament: sofascore.Tournament) -> list[Sofascore]:
-    client = sofascore.Client()
+class Game:
+    def __init__(self, campaign: campaigns.Campaign) -> None:
+        self.candidates: list[Candidate] = []
 
-    players: list[Sofascore] = []
-    for round in range(1, 37):
-        for game in client.games(tournament, round):
-            lineup = client.lineup(game).all
-            for player, stats in lineup:
-                found = False
-                for p in players:
-                    if player == p.player:
-                        p.stats.append(stats)
-                        found = True
-                        break
-                if not found:
-                    players.append(Sofascore(player=player, stats=[stats]))
-
-    return players
-
-
-def get_holdet(game: holdet.Game) -> list[Holdet]:
-    client = holdet.Client()
-
-    # Use a dict for lookups to improve speed
-    players_dict: dict[int, Holdet] = {}
-    for round in client.rounds(game):
-        stats = client.statistics(game, round)
-        for stat in stats:
-            player_id = stat.player.id
-            if player_id in players_dict:
-                players_dict[player_id].stats.append(stat)
-            else:
-                players_dict[player_id] = Holdet(player=stat.player, stats=[stat])
-
-    return list(players_dict.values())
-
-
-def main():
-    # Setup logger with Rich formatting
-    logging.basicConfig(
-        level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
-    )
-    console = Console()
-
-    with console.status("Fetching data...") as status:
-        holdet_candidates = get_holdet(
-            holdet.Game(
-                644,  # Spring 2023
-                422,  # Premier League
-            )
-        )
-        status.console.log(f"Found {len(holdet_candidates)} players on Holdet")
-        sofascore_candidates = get_sofascore(
-            sofascore.Tournament(
-                17,  # Premier League
-                41886,  # 2022/2023
-            )
-        )
-        candidates: list[Candidate] = []
-        for s in sofascore_candidates:
+        logging.info("Fetching data...")
+        holdet_candidates = self._get_holdet(campaign.holdet)
+        for s in self._get_sofascore(campaign.sofascore):
             # Find the closest match in Holdet for the current Sofascore player and
             # remove it from the list afterwards.
             h = _find_closest_match(s, holdet_candidates)
             holdet_candidates.remove(h)
-            candidates.append(Candidate(h, s))
-        status.console.log(f"Found {len(candidates)} players on Sofascore")
+            self.candidates.append(Candidate(h, s))
+        logging.info(f"Collected data from {len(self.candidates)} candidates")
 
-    # Extract and flatten the data
-    data = []
-    for candidate in candidates:
-        for round in candidate.rounds:
-            for stat in round.stats:
-                row = {
-                    "id": candidate.id,
-                    "round": round.number,
-                }
-                row.update(stat.features)
-                row.update({"growth": round.growth})
-                data.append(row)
+    def _get_sofascore(self, tournament: sofascore.Tournament) -> list[Sofascore]:
+        client = sofascore.Client()
 
-    # Create a pandas DataFrame
-    df = pd.DataFrame(data)
+        players: list[Sofascore] = []
+        for round in range(1, 37):
+            for game in client.games(tournament, round):
+                lineup = client.lineup(game).all
+                for player, stats in lineup:
+                    found = False
+                    for p in players:
+                        if player == p.player:
+                            p.stats.append(stats)
+                            found = True
+                            break
+                    if not found:
+                        players.append(Sofascore(player=player, stats=[stats]))
 
-    # Define features (X) and target (y)
+        return players
+
+    def _get_holdet(self, game: holdet.Game) -> list[Holdet]:
+        client = holdet.Client()
+
+        # Use a dict for lookups to improve speed
+        players_dict: dict[int, Holdet] = {}
+        for round in client.rounds(game):
+            stats = client.statistics(game, round)
+            for stat in stats:
+                player_id = stat.player.id
+                if player_id in players_dict:
+                    players_dict[player_id].stats.append(stat)
+                else:
+                    players_dict[player_id] = Holdet(player=stat.player, stats=[stat])
+
+        return list(players_dict.values())
+
+    def df(self) -> pd.DataFrame:
+        """
+        Return all candidates in a flattened data frame for training
+        """
+        data = []
+        for candidate in self.candidates:
+            data.append(candidate.df(train=True))
+
+        df = pd.concat(data)
+        logging.info(f"Created data frame: {len(df)} rows, {len(df.columns)} columns")
+        return df
+
+
+def xGrowthML(c: Candidate, model) -> float:
+    # Catch players with no stats, most likely because they never played.
+    # The model is going to complain if this happens so we need to just
+    # return 0
+    if len(c.df()) == 0:
+        return 0.0
+    return model.predict(c.df())[-1]
+
+
+def xGrowthEMA(c: Candidate, alpha: float) -> float:
+    """
+    Predict the growth for the next game using exponential moving average
+    (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
+    values give more weight to recent stats.
+    """
+    ema = 0.0
+    for i, round in enumerate(sorted(c.rounds)):
+        if i == 0:
+            ema = round.xGrowth
+        else:
+            ema = alpha * round.xGrowth + (1 - alpha) * ema
+    return ema
+
+
+def main():
+    # Setup logger and console with Rich formatting
+    logging.basicConfig(
+        level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
+    )
+
+    # Init the game and get a dataframe of the candidates.
+    game = Game(campaigns.PRIMER_LEAGUE_2023)
+    df = game.df()
+
+    # X is the colum that we're trying to predict, y is the column that we're
+    # using to make predictions.
     X = df.iloc[:, :-1]
     y = df.iloc[:, -1]
 
@@ -409,14 +446,21 @@ def main():
     model.fit(X_train, y_train)
 
     # Make predictions
+    logging.info("Training model predictions...")
     y_pred = model.predict(X_test)
 
     # Evaluate the model
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    print("Root Mean Squared Error:", rmse)
+    logging.info(f"Root Mean Squared Error: {rmse:.2f} growth")
 
-    # with console.status("Finding optimal team..."):
-    #     solution = lp.find_optimal_team(candidates, 70 * 1000000)
-    #     status.console.log(f"Found optimal 11 out of {len(candidates)} players")
+    logging.info("Finding optimal team...")
 
-    # print(Formation(solution))
+    # Simple evaluator using linear regression to predict the growth
+    def eval(c: Candidate) -> float:
+        if c.captain:
+            return c.value + (xGrowthML(c, model) * 2)
+        return c.value + xGrowthML(c, model)
+
+    solution = lp.find_optimal_team(game.candidates, eval, 70 * 1000000)
+
+    print(Formation(solution, eval))

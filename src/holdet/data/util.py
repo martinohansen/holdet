@@ -1,5 +1,3 @@
-from datetime import timedelta
-
 import requests
 from pyrate_limiter import MemoryListBucket
 from requests_cache import CacheMixin, FileCache
@@ -12,8 +10,8 @@ class CachedLimiterSession(CacheMixin, LimiterMixin, requests.Session):
     @staticmethod
     def new(
         name: str,
-        expire_after: timedelta = timedelta(days=300),
         per_second: int = 1,
+        expire_after="NEVER_EXPIRE",
     ) -> "CachedLimiterSession":
         return CachedLimiterSession(
             backend=FileCache(name),
