@@ -93,7 +93,7 @@ class Statistics:
     def clean_sheet(self) -> bool:
         return self.team_goals_conceded == 0
 
-    # These methods are not perfect, but they are a good enought approximation
+    # These methods are not perfect, but they are a good enough approximation
     # and they help favor players scoring goals versus defending players.
     @property
     def decisive_goal_for_draw(self) -> bool:
@@ -113,37 +113,6 @@ class Statistics:
 
     # TODO: We need to read yellow and red cards from the incident call:
     # https://api.sofascore.com/api/v1/event/11227333/incidents
-
-    @property
-    def features(self) -> dict:
-        """
-        Return a dictionary with all the features that can be used to train a
-        model.
-        """
-        return {
-            "assists": self.assists,
-            "expectedAssists": self.expectedAssists,
-            "expectedGoals": self.expectedGoals,
-            "goals": self.goals,
-            "goalsPrevented": self.goalsPrevented,
-            "minutesPlayed": self.minutesPlayed,
-            "onTargetScoringAttempt": self.onTargetScoringAttempt,
-            "savedShotsFromInsideTheBox": self.savedShotsFromInsideTheBox,
-            "saves": self.saves,
-            "team_goals": self.team_goals,
-            "team_goals_conceded": self.team_goals_conceded,
-            "win": int(self.win),
-            "loss": int(self.loss),
-            "draw": int(self.draw),
-            "clean_sheet": int(self.clean_sheet),
-            "decisive_goal_for_draw": int(self.decisive_goal_for_draw),
-            "decisive_goal_for_win": int(self.decisive_goal_for_win),
-            # Knowing the opponent is important for the model to learn how to
-            # predict the outcome of a game.
-            "opponent": self.game.away.id
-            if self.side == Side.HOME
-            else self.game.home.id,
-        }
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():

@@ -183,6 +183,43 @@ class Candidate:
             if stat.round.end < datetime.now(tz=timezone.utc)
         ]
 
+    def features(self, stat: sofascore.Statistics) -> dict[str, float | int]:
+        """
+        Return a dictionary with all the features that can be used to train a
+        model.
+        """
+
+        return {
+            # Data know before hand which can be used to predict the outcome.
+            # TODO: Add data from betting sites
+            "team": stat.game.home.id
+            if stat.side == sofascore.Side.HOME
+            else stat.game.away.id,
+            "opponent": stat.game.away.id
+            if stat.side == sofascore.Side.HOME
+            else stat.game.home.id,
+            "side": stat.side.value,
+            # Stats known after game has finished
+            "substitute": int(stat.substitute),
+            "assists": stat.assists,
+            "expectedAssists": stat.expectedAssists,
+            "expectedGoals": stat.expectedGoals,
+            "goals": stat.goals,
+            "goalsPrevented": stat.goalsPrevented,
+            "minutesPlayed": stat.minutesPlayed,
+            "onTargetScoringAttempt": stat.onTargetScoringAttempt,
+            "savedShotsFromInsideTheBox": stat.savedShotsFromInsideTheBox,
+            "saves": stat.saves,
+            "team_goals": stat.team_goals,
+            "team_goals_conceded": stat.team_goals_conceded,
+            "win": int(stat.win),
+            "loss": int(stat.loss),
+            "draw": int(stat.draw),
+            "clean_sheet": int(stat.clean_sheet),
+            "decisive_goal_for_draw": int(stat.decisive_goal_for_draw),
+            "decisive_goal_for_win": int(stat.decisive_goal_for_win),
+        }
+
     def df(self, train: bool = False) -> pd.DataFrame:
         """
         Return a data frame with features for all rounds. Include the actual
@@ -190,9 +227,10 @@ class Candidate:
         """
         data = []
         for round in self.rounds:
-            row = {
+            row: dict[str, int | float] = {
                 "id": self.id,
                 "round": round.number,
+                "position": round.position.value,
             }
 
             # If the candidate has no stats for the round, skip it
@@ -202,7 +240,7 @@ class Candidate:
             # Sum stats from multiple stats in the same round, this can
             # happen as some rounds have multiple games for some teams.
             for stat in round.stats:
-                for key, value in stat.features.items():
+                for key, value in self.features(stat).items():
                     if key in row:
                         row[key] += value
                     else:
@@ -232,14 +270,14 @@ class Candidate:
 
 
 class Formation:
-    def __init__(self, solution: list[Candidate], evaluator: lp.Evaluator):
+    def __init__(self, solution: list[Candidate], xValue: lp.xValue):
         self.position: dict[str, list[Candidate]] = {
             "keeper": [],
             "defenses": [],
             "midfielders": [],
             "forwards": [],
         }
-        self.evaluator = evaluator
+        self.xValue = xValue
         self._populate(solution)
 
     def _populate(self, solution: list[Candidate]):
@@ -272,7 +310,7 @@ class Formation:
             for player in players:
                 # Calculate the xGrowth using the evaluator to show in the
                 # output what the model predicts.
-                xGrowth = self.evaluator(player) - player.value
+                xGrowth = self.xValue(player) - player.value
 
                 table.add_row(
                     position.capitalize(), str(player), f"{xGrowth / 1000:.0f}K"
@@ -433,8 +471,7 @@ def main():
     game = Game(campaigns.PRIMER_LEAGUE_2023)
     df = game.df()
 
-    # X is the colum that we're trying to predict, y is the column that we're
-    # using to make predictions.
+    # X is the data we're using to predict y
     X = df.iloc[:, :-1]
     y = df.iloc[:, -1]
 
@@ -445,22 +482,21 @@ def main():
     model = LinearRegression()
     model.fit(X_train, y_train)
 
-    # Make predictions
-    logging.info("Training model predictions...")
+    # Make predictions on the test data
+    logging.info("Training model on data...")
     y_pred = model.predict(X_test)
 
-    # Evaluate the model
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    logging.info(f"Root Mean Squared Error: {rmse:.2f} growth")
-
-    logging.info("Finding optimal team...")
+    score = model.score(X_test, y_test)
+    avg_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    logging.info(f"Model evaluation: {avg_rmse=:.2f}, {score=:.4f}")
 
     # Simple evaluator using linear regression to predict the growth
-    def eval(c: Candidate) -> float:
+    def xValue(c: Candidate) -> float:
         if c.captain:
             return c.value + (xGrowthML(c, model) * 2)
         return c.value + xGrowthML(c, model)
 
-    solution = lp.find_optimal_team(game.candidates, eval, 70 * 1000000)
+    logging.info("Finding optimal team...")
+    solution = lp.find_optimal_team(game.candidates, xValue, 70 * 1000000)
 
-    print(Formation(solution, eval))
+    print(Formation(solution, xValue))

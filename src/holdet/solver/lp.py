@@ -55,17 +55,17 @@ class Candidate(Protocol):
         ...
 
 
-Evaluator = Callable[[Candidate], float]
+xValue = Callable[[Candidate], float]
 """
-Evaluator takes a candidates and returns the value that we expect that
-candidate to have in the next round. How that prediction is made is up to the
-implementation of the evaluator.
+xValue takes a candidates and returns the value that we expect that candidate to
+have in the next round. How that prediction is made is up to the implementation
+of the function.
 """
 
 
 def find_optimal_team(
     candidates: Sequence[Candidate],
-    evaluator: Evaluator,
+    evaluator: xValue,
     budget: int,
 ):
     """
