@@ -15,8 +15,6 @@ from sklearn.model_selection import train_test_split  # type: ignore
 from holdet.data import holdet, sofascore
 from holdet.solver import lp
 
-from . import campaigns
-
 
 @dataclass
 class Holdet:
@@ -376,12 +374,32 @@ def _find_closest_match(s: Sofascore, holdet_candidates: list[Holdet]) -> Holdet
 
 
 class Game:
-    def __init__(self, campaign: campaigns.Campaign) -> None:
+    def __init__(self) -> None:
         self.candidates: list[Candidate] = []
+        self.holdet_client = holdet.Client()
+        self.sofascore_client = sofascore.Client()
+
+        tournament = self.holdet_client.tournament(holdet.PRIMER_LEAGUE)
 
         logging.info("Fetching data...")
-        holdet_candidates = self._get_holdet(campaign.holdet)
-        for s in self._get_sofascore(campaign.sofascore):
+        holdet_candidates = self._get_holdet(
+            tournament,
+            [
+                holdet.Game(holdet.PRIMER_LEAGUE_FALL_2022),
+                holdet.Game(holdet.PRIMER_LEAGUE_SPRING_2023),
+            ],
+        )
+        for s in self._get_sofascore(
+            sofascore.Tournament(
+                sofascore.PRIMER_LEAGUE,
+                seasons=[
+                    sofascore.Season(
+                        sofascore.PRIMER_LEAGUE,
+                        sofascore.PRIMER_LEAGUE_2022_2023,
+                    )
+                ],
+            )
+        ):
             # Find the closest match in Holdet for the current Sofascore player and
             # remove it from the list afterwards.
             h = _find_closest_match(s, holdet_candidates)
@@ -390,37 +408,41 @@ class Game:
         logging.info(f"Collected data from {len(self.candidates)} candidates")
 
     def _get_sofascore(self, tournament: sofascore.Tournament) -> list[Sofascore]:
-        client = sofascore.Client()
-
         players: list[Sofascore] = []
         for round in range(1, 37):
-            for game in client.games(tournament, round):
-                lineup = client.lineup(game).all
-                for player, stats in lineup:
-                    found = False
-                    for p in players:
-                        if player == p.player:
-                            p.stats.append(stats)
-                            found = True
-                            break
-                    if not found:
-                        players.append(Sofascore(player=player, stats=[stats]))
+            for season in tournament.seasons:
+                for game in self.sofascore_client.games(season, round):
+                    lineup = self.sofascore_client.lineup(game).all
+                    for player, stats in lineup:
+                        found = False
+                        for p in players:
+                            if player == p.player:
+                                p.stats.append(stats)
+                                found = True
+                                break
+                        if not found:
+                            players.append(Sofascore(player=player, stats=[stats]))
 
         return players
 
-    def _get_holdet(self, game: holdet.Game) -> list[Holdet]:
-        client = holdet.Client()
-
+    def _get_holdet(
+        self,
+        tournament: holdet.Tournament,
+        games: list[holdet.Game],
+    ) -> list[Holdet]:
         # Use a dict for lookups to improve speed
         players_dict: dict[int, Holdet] = {}
-        for round in client.rounds(game):
-            stats = client.statistics(game, round)
-            for stat in stats:
-                player_id = stat.player.id
-                if player_id in players_dict:
-                    players_dict[player_id].stats.append(stat)
-                else:
-                    players_dict[player_id] = Holdet(player=stat.player, stats=[stat])
+        for game in games:
+            for round in self.holdet_client.rounds(game):
+                stats = self.holdet_client.statistics(tournament, game, round)
+                for stat in stats:
+                    player_id = stat.player.id
+                    if player_id in players_dict:
+                        players_dict[player_id].stats.append(stat)
+                    else:
+                        players_dict[player_id] = Holdet(
+                            player=stat.player, stats=[stat]
+                        )
 
         return list(players_dict.values())
 
@@ -468,7 +490,7 @@ def main():
     )
 
     # Init the game and get a dataframe of the candidates.
-    game = Game(campaigns.PRIMER_LEAGUE_2023)
+    game = Game()
     df = game.df()
 
     # X is the data we're using to predict y

@@ -7,15 +7,24 @@ import requests
 
 from . import util
 
+PRIMER_LEAGUE = 17
+PRIMER_LEAGUE_2022_2023 = 41886
+
+
+@dataclass
+class Season:
+    tournament_id: int
+    id: int
+
+    @property
+    def endpoint(self) -> str:
+        return f"/unique-tournament/{self.tournament_id}/season/{self.id}"
+
 
 @dataclass
 class Tournament:
     id: int
-    season_id: int
-
-    @property
-    def endpoint(self) -> str:
-        return f"/unique-tournament/{self.id}/season/{self.season_id}"
+    seasons: list[Season]
 
 
 @dataclass
@@ -41,7 +50,7 @@ class Game:
     awayScore: int
 
     round: int
-    tournament: Tournament
+    tournament: Season
 
     startTimestamp: int
 
@@ -169,7 +178,7 @@ class Client:
         response.raise_for_status()
         return response.json()
 
-    def teams(self, tournament: Tournament) -> list[Team]:
+    def teams(self, tournament: Season) -> list[Team]:
         response = self._get(f"{tournament.endpoint}/statistics/info")
         return [
             Team(
@@ -181,13 +190,13 @@ class Client:
             for team in response["teams"]
         ]
 
-    def games(self, tournament: Tournament, round: int) -> list[Game]:
-        response = self._get(f"{tournament.endpoint}/events/round/{round}")
+    def games(self, season: Season, round: int) -> list[Game]:
+        response = self._get(f"{season.endpoint}/events/round/{round}")
         return [
             Game(
                 id=game["id"],
                 slug=game["slug"],
-                tournament=tournament,
+                tournament=season,
                 round=game["roundInfo"]["round"],
                 home=Team(
                     id=game["homeTeam"]["id"],

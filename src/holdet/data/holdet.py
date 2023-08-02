@@ -5,11 +5,14 @@ from enum import Enum
 
 from . import util
 
+PRIMER_LEAGUE = 422
+PRIMER_LEAGUE_FALL_2022 = 629
+PRIMER_LEAGUE_SPRING_2023 = 644
+
 
 @dataclass
 class Game:
     id: int
-    tournament_id: int
 
 
 @dataclass
@@ -160,8 +163,12 @@ class Client:
             )
         return rounds
 
-    def statistics(self, game: Game, round: Round) -> list[Statistics]:
-        tournament = self.tournament(game)
+    def statistics(
+        self,
+        tournament: Tournament,
+        game: Game,
+        round: Round,
+    ) -> list[Statistics]:
         stats = self._get(f"/games/{game.id}/rounds/{round.number}/statistics")
 
         statistics: list[Statistics] = []
@@ -193,8 +200,8 @@ class Client:
             )
         return statistics
 
-    def tournament(self, game: Game) -> Tournament:
-        tournament = self._get(f"/tournaments/{game.tournament_id}")
+    def tournament(self, id: int) -> Tournament:
+        tournament = self._get(f"/tournaments/{id}")
 
         teams: list[Team] = []
         for team in tournament["teams"]:
