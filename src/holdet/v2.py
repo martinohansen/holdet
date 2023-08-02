@@ -8,7 +8,7 @@ import pandas as pd
 from rich import print
 from rich.logging import RichHandler
 from rich.table import Table
-from sklearn.linear_model import LinearRegression  # type: ignore
+from sklearn.ensemble import RandomForestRegressor  # type: ignore
 from sklearn.metrics import mean_squared_error  # type: ignore
 from sklearn.model_selection import train_test_split  # type: ignore
 
@@ -114,6 +114,10 @@ class Candidate:
         return self.avatar.player.team.name
 
     @property
+    def team_id(self) -> int:
+        return self.avatar.player.team.id
+
+    @property
     def value(self) -> int:
         return self.rounds[-1].values.value
 
@@ -188,16 +192,11 @@ class Candidate:
         """
 
         return {
-            # Data know before hand which can be used to predict the outcome.
             # TODO: Add data from betting sites
-            "team": stat.game.home.id
-            if stat.side == sofascore.Side.HOME
-            else stat.game.away.id,
             "opponent": stat.game.away.id
             if stat.side == sofascore.Side.HOME
             else stat.game.home.id,
             "side": stat.side.value,
-            # Stats known after game has finished
             "substitute": int(stat.substitute),
             "assists": stat.assists,
             "expectedAssists": stat.expectedAssists,
@@ -229,6 +228,7 @@ class Candidate:
                 "id": self.id,
                 "round": round.number,
                 "position": round.position.value,
+                "team": self.team_id,
             }
 
             # If the candidate has no stats for the round, skip it
@@ -486,7 +486,10 @@ def xGrowthEMA(c: Candidate, alpha: float) -> float:
 def main():
     # Setup logger and console with Rich formatting
     logging.basicConfig(
-        level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
+        level="INFO",
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler()],
     )
 
     # Init the game and get a dataframe of the candidates.
@@ -501,18 +504,17 @@ def main():
     X_train, X_test, y_train, y_test = train_test_split(X, y)
 
     # Create and fit the model
-    model = LinearRegression()
+    model = RandomForestRegressor()
     model.fit(X_train, y_train)
 
     # Make predictions on the test data
-    logging.info("Training model on data...")
     y_pred = model.predict(X_test)
 
     score = model.score(X_test, y_test)
     avg_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     logging.info(f"Model evaluation: {avg_rmse=:.2f}, {score=:.4f}")
 
-    # Simple evaluator using linear regression to predict the growth
+    # Simple evaluator using model to predict the growth
     def xValue(c: Candidate) -> float:
         if c.captain:
             return c.value + (xGrowthML(c, model) * 2)
