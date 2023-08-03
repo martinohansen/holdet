@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -217,37 +218,44 @@ class Candidate:
             "decisive_goal_for_win": int(stat.decisive_goal_for_win),
         }
 
-    def df(self, train: bool = False) -> pd.DataFrame:
+    def aggregate_features(self, round: Round) -> dict:
+        """
+        Aggregate all the features from a round into one. This is needed for
+        rounds with multiple games in them. The features are summed together.
+
+        Its not ideal for stuff like opponent or side which will simply be added
+        together, but thats we can do for now.
+        """
+        round_stats: dict[str, int | float] = {}
+        for stat in round.stats:
+            for key, value in self.features(stat).items():
+                round_stats[key] = round_stats.get(key, 0) + value
+        return round_stats
+
+    def generate_dataframe(self, n_steps: int = 10) -> pd.DataFrame:
         """
         Return a data frame with features for all rounds. Include the actual
         growth if train is True.
         """
         data = []
+        last_rounds = deque(maxlen=n_steps)  # type: ignore
+
         for round in self.rounds:
-            row: dict[str, int | float] = {
+            row = {
                 "id": self.id,
                 "round": round.number,
                 "position": round.position.value,
                 "team": self.team_id,
+                "growth": round.growth,
             }
-
-            # If the candidate has no stats for the round, skip it
-            if len(round.stats) == 0:
-                continue
-
-            # Sum stats from multiple stats in the same round, this can
-            # happen as some rounds have multiple games for some teams.
-            for stat in round.stats:
-                for key, value in self.features(stat).items():
-                    if key in row:
-                        row[key] += value
-                    else:
-                        row[key] = value
-
-            if train:
-                row.update({"growth": round.growth})
+            for idx, round in enumerate(last_rounds):
+                features = self.aggregate_features(round)
+                for key, value in features.items():
+                    row[f"{idx}_{key}"] = value
 
             data.append(row)
+            last_rounds.append(round)
+
         return pd.DataFrame(data)
 
     def __eq__(self, other: object):
@@ -409,6 +417,7 @@ class Game:
 
     def _get_sofascore(self, tournament: sofascore.Tournament) -> list[Sofascore]:
         players: list[Sofascore] = []
+        # TODO: Read rounds from API
         for round in range(1, 37):
             for season in tournament.seasons:
                 for game in self.sofascore_client.games(season, round):
@@ -446,13 +455,13 @@ class Game:
 
         return list(players_dict.values())
 
-    def df(self) -> pd.DataFrame:
+    def generate_dataframe(self) -> pd.DataFrame:
         """
         Return all candidates in a flattened data frame for training
         """
         data = []
         for candidate in self.candidates:
-            data.append(candidate.df(train=True))
+            data.append(candidate.generate_dataframe())
 
         df = pd.concat(data)
         logging.info(f"Created data frame: {len(df)} rows, {len(df.columns)} columns")
@@ -463,9 +472,9 @@ def xGrowthML(c: Candidate, model) -> float:
     # Catch players with no stats, most likely because they never played.
     # The model is going to complain if this happens so we need to just
     # return 0
-    if len(c.df()) == 0:
+    if len(c.generate_dataframe()) == 0:
         return 0.0
-    return model.predict(c.df())[-1]
+    return model.predict(c.generate_dataframe())[-1]
 
 
 def xGrowthEMA(c: Candidate, alpha: float) -> float:
@@ -494,11 +503,15 @@ def main():
 
     # Init the game and get a dataframe of the candidates.
     game = Game()
-    df = game.df()
+    df = game.generate_dataframe()
+
+    df.to_csv("data.csv", index=False)
+
+    df = df.dropna()
 
     # X is the data we're using to predict y
-    X = df.iloc[:, :-1]
-    y = df.iloc[:, -1]
+    X = df.drop(columns=["growth"])
+    y = df["growth"]
 
     # Split the data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, y)
