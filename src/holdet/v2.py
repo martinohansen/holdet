@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 import logging
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
-from rich import print
+from keras.layers import LSTM, Dense  # type: ignore
+from keras.models import Sequential  # type: ignore
 from rich.logging import RichHandler
 from rich.table import Table
-from sklearn.ensemble import RandomForestRegressor  # type: ignore
-from sklearn.metrics import mean_squared_error  # type: ignore
-from sklearn.model_selection import train_test_split  # type: ignore
+from sklearn.preprocessing import MinMaxScaler  # type: ignore
 
 from holdet.data import holdet, sofascore
 from holdet.solver import lp
@@ -232,13 +230,11 @@ class Candidate:
                 round_stats[key] = round_stats.get(key, 0) + value
         return round_stats
 
-    def generate_dataframe(self, n_steps: int = 10) -> pd.DataFrame:
+    def generate_dataframe(self) -> pd.DataFrame:
         """
-        Return a data frame with features for all rounds. Include the actual
-        growth if train is True.
+        Generate a dataframe for the candidate with features for every round
         """
         data = []
-        last_rounds = deque(maxlen=n_steps)  # type: ignore
 
         for round in self.rounds:
             row = {
@@ -248,13 +244,13 @@ class Candidate:
                 "team": self.team_id,
                 "growth": round.growth,
             }
-            for idx, round in enumerate(last_rounds):
-                features = self.aggregate_features(round)
-                for key, value in features.items():
-                    row[f"{idx}_{key}"] = value
+
+            # Append all features to the row
+            features = self.aggregate_features(round)
+            for key, value in features.items():
+                row[key] = value
 
             data.append(row)
-            last_rounds.append(round)
 
         return pd.DataFrame(data)
 
@@ -457,7 +453,7 @@ class Game:
 
     def generate_dataframe(self) -> pd.DataFrame:
         """
-        Return all candidates in a flattened data frame for training
+        Return a combined dataframe for all the candidates.
         """
         data = []
         for candidate in self.candidates:
@@ -492,6 +488,81 @@ def xGrowthEMA(c: Candidate, alpha: float) -> float:
     return ema
 
 
+class Model:
+    def __init__(self) -> None:
+        self.model = Sequential()
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
+
+    def prepare_data(self, df: pd.DataFrame):
+        """
+        Prepare the data for training the model. This includes normalizing the
+        data and combining the data into a X and y array.
+        """
+        # Drop NaN values, we can't use them for training this model.
+        df.dropna(inplace=True)
+
+        # Normalize the target variable
+        df["growth"] = self.scaler.fit_transform(df["growth"].values.reshape(-1, 1))  # type: ignore
+
+        # Combine number of time_steps into a single array and set the target to the
+        # growth of the following round. E.g. combine values from round 1-10 and set
+        # the target to the growth of round 11.
+        time_steps = 10
+        features = []
+        target = []
+        for _, group in df.groupby("id"):
+            for i in range(time_steps, len(group)):
+                features.append(group.iloc[i - time_steps : i].values)
+                target.append(group.iloc[i]["growth"])
+        return np.array(features), np.array(target)
+
+    def train(self, df: pd.DataFrame) -> None:
+        """
+        Train the LSTM model using the given data frame. Returns the model for use
+        to predict the growth of a player.
+        """
+        X, y = self.prepare_data(df)
+
+        # Build model with layers according to the data
+        self.model.add(
+            LSTM(
+                units=50,
+                return_sequences=True,
+                input_shape=(
+                    X.shape[1],  # Number of time steps
+                    X.shape[2],  # Number of features
+                ),
+            )
+        )
+        self.model.add(LSTM(units=50))
+        self.model.add(Dense(units=1))
+
+        self.model.compile(optimizer="adam", loss="mean_squared_error")
+
+        # Train the model
+        logging.info("Training model...")
+        self.model.fit(
+            X,
+            y,
+            epochs=20,  # Number of iterations over the entire dataset
+            validation_split=0.2,  # Use 20% of the data for validation
+        )
+
+        # Evaluate the model
+        loss = self.model.evaluate(X, y)
+        inverse_rmse = self.scaler.inverse_transform([[np.sqrt(loss)]])[0][0]
+        logging.info(f"Model evaluation: {loss=!r}, {inverse_rmse=!r}")
+
+    def predict(self, df: pd.DataFrame):
+        """
+        Predict the growth for the next game using the given data frame. The
+        data frame should contain the same columns as the one used for training
+        the model.
+        """
+        X, _ = self.prepare_data(df)
+        return self.model.predict(X)
+
+
 def main():
     # Setup logger and console with Rich formatting
     logging.basicConfig(
@@ -503,37 +574,19 @@ def main():
 
     # Init the game and get a dataframe of the candidates.
     game = Game()
-    df = game.generate_dataframe()
+    model = Model()
 
-    df.to_csv("data.csv", index=False)
+    model.train(game.generate_dataframe())
 
-    df = df.dropna()
+    breakpoint()
+    print(model.predict(game.candidates[0].generate_dataframe()))
+    # # Simple evaluator using model to predict the growth
+    # def xValue(c: Candidate) -> float:
+    #     if c.captain:
+    #         return c.value + (xGrowthML(c, model) * 2)
+    #     return c.value + xGrowthML(c, model)
 
-    # X is the data we're using to predict y
-    X = df.drop(columns=["growth"])
-    y = df["growth"]
+    # logging.info("Finding optimal team...")
+    # solution = lp.find_optimal_team(game.candidates, xValue, 70 * 1000000)
 
-    # Split the data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y)
-
-    # Create and fit the model
-    model = RandomForestRegressor()
-    model.fit(X_train, y_train)
-
-    # Make predictions on the test data
-    y_pred = model.predict(X_test)
-
-    score = model.score(X_test, y_test)
-    avg_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    logging.info(f"Model evaluation: {avg_rmse=:.2f}, {score=:.4f}")
-
-    # Simple evaluator using model to predict the growth
-    def xValue(c: Candidate) -> float:
-        if c.captain:
-            return c.value + (xGrowthML(c, model) * 2)
-        return c.value + xGrowthML(c, model)
-
-    logging.info("Finding optimal team...")
-    solution = lp.find_optimal_team(game.candidates, xValue, 70 * 1000000)
-
-    print(Formation(solution, xValue))
+    # print(Formation(solution, xValue))
