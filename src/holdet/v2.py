@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from keras.layers import LSTM, Dense  # type: ignore
 from keras.models import Sequential  # type: ignore
+from rich import print
 from rich.logging import RichHandler
 from rich.table import Table
 from sklearn.preprocessing import MinMaxScaler  # type: ignore
@@ -489,31 +490,44 @@ def xGrowthEMA(c: Candidate, alpha: float) -> float:
 
 
 class Model:
-    def __init__(self) -> None:
+    def __init__(self, n_steps: int = 10) -> None:
+        self.n_steps = n_steps
+
         self.model = Sequential()
-        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        self.scaler_x = MinMaxScaler(feature_range=(0, 1))
+        self.scaler_y = MinMaxScaler(feature_range=(0, 1))
 
     def prepare_data(self, df: pd.DataFrame):
         """
         Prepare the data for training the model. This includes normalizing the
         data and combining the data into a X and y array.
         """
-        # Drop NaN values, we can't use them for training this model.
-        df.dropna(inplace=True)
 
-        # Normalize the target variable
-        df["growth"] = self.scaler.fit_transform(df["growth"].values.reshape(-1, 1))  # type: ignore
+        # NaN values is often because no stat was recorded for the given player
+        # for that game. That means that the player was not on the pitch and
+        # thus 0 is the proper value to use.
+        df.fillna(0, inplace=True)
+
+        # Normalize the data to gain better results. Using separate scaler to
+        # allow for independently inverting again.
+        df[df.columns.difference(["growth"])] = self.scaler_x.fit_transform(
+            df[df.columns.difference(["growth"])]
+        )
+        df["growth"] = self.scaler_y.fit_transform(df[["growth"]])
 
         # Combine number of time_steps into a single array and set the target to the
         # growth of the following round. E.g. combine values from round 1-10 and set
         # the target to the growth of round 11.
-        time_steps = 10
+        time_steps = self.n_steps
         features = []
         target = []
         for _, group in df.groupby("id"):
+            group.drop(columns=["id", "round"], inplace=True)
+
             for i in range(time_steps, len(group)):
                 features.append(group.iloc[i - time_steps : i].values)
                 target.append(group.iloc[i]["growth"])
+
         return np.array(features), np.array(target)
 
     def train(self, df: pd.DataFrame) -> None:
@@ -535,6 +549,7 @@ class Model:
             )
         )
         self.model.add(LSTM(units=50))
+        self.model.add(Dense(units=50, activation="relu"))
         self.model.add(Dense(units=1))
 
         self.model.compile(optimizer="adam", loss="mean_squared_error")
@@ -544,14 +559,17 @@ class Model:
         self.model.fit(
             X,
             y,
-            epochs=20,  # Number of iterations over the entire dataset
+            epochs=10,  # Number of iterations over the entire dataset
             validation_split=0.2,  # Use 20% of the data for validation
         )
 
-        # Evaluate the model
+    def evaluate(self, df: pd.DataFrame) -> str:
+        """
+        Return the loss and RMSE in a string for the given data frame.
+        """
+        X, y = self.prepare_data(df)
         loss = self.model.evaluate(X, y)
-        inverse_rmse = self.scaler.inverse_transform([[np.sqrt(loss)]])[0][0]
-        logging.info(f"Model evaluation: {loss=!r}, {inverse_rmse=!r}")
+        return f"Model evaluation: {loss=!r}"
 
     def predict(self, df: pd.DataFrame):
         """
@@ -560,7 +578,8 @@ class Model:
         the model.
         """
         X, _ = self.prepare_data(df)
-        return self.model.predict(X)
+        y = self.model.predict(X)
+        return self.scaler_y.inverse_transform(y)
 
 
 def main():
@@ -572,16 +591,21 @@ def main():
         handlers=[RichHandler()],
     )
 
-    # Init the game and get a dataframe of the candidates.
     game = Game()
     model = Model()
 
-    model.train(game.generate_dataframe())
+    df = game.generate_dataframe()
+    model.train(df)
+    print(model.evaluate(df))
 
-    breakpoint()
-    print(model.predict(game.candidates[0].generate_dataframe()))
-    # # Simple evaluator using model to predict the growth
+    candidate = game.candidates[0]
+    print(candidate.generate_dataframe())
+    print(model.predict(candidate.generate_dataframe()))
+
     # def xValue(c: Candidate) -> float:
+    #     """
+    #     Simple evaluator using model to predict the growth
+    #     """
     #     if c.captain:
     #         return c.value + (xGrowthML(c, model) * 2)
     #     return c.value + xGrowthML(c, model)
