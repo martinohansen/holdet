@@ -2,6 +2,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Type
 
 import numpy as np
 import pandas as pd
@@ -156,6 +157,10 @@ class Candidate:
         return "⚽️"
 
     @property
+    def xValue(self) -> float:
+        raise NotImplementedError("xValue not implemented")
+
+    @property
     def similarity(self) -> float:
         return _similarity(self.person.player, self.avatar.player)
 
@@ -273,14 +278,13 @@ class Candidate:
 
 
 class Formation:
-    def __init__(self, solution: list[Candidate], xValue: lp.xValue):
+    def __init__(self, solution: list[Candidate]):
         self.position: dict[str, list[Candidate]] = {
             "keeper": [],
             "defenses": [],
             "midfielders": [],
             "forwards": [],
         }
-        self.xValue = xValue
         self._populate(solution)
 
     def _populate(self, solution: list[Candidate]):
@@ -311,12 +315,14 @@ class Formation:
         table.add_column("xGrowth", justify="right")
         for index, (position, players) in enumerate(self):
             for player in players:
-                # Calculate the xGrowth using the evaluator to show in the
-                # output what the model predicts.
-                xGrowth = self.xValue(player) - player.value
+                # Calculate the xGrowth by subtracting the player's expected
+                # value from the actual value.
+                xGrowth = player.xValue - player.value
 
                 table.add_row(
-                    position.capitalize(), str(player), f"{xGrowth / 1000:.0f}K"
+                    position.capitalize(),
+                    str(player),
+                    f"{xGrowth / 1000:.0f}K",
                 )
 
                 # Avoid repeating the position name in the same row
@@ -379,7 +385,7 @@ def _find_closest_match(s: Sofascore, holdet_candidates: list[Holdet]) -> Holdet
 
 
 class Game:
-    def __init__(self) -> None:
+    def __init__(self, candidate: Type[Candidate]) -> None:
         self.candidates: list[Candidate] = []
         self.holdet_client = holdet.Client()
         self.sofascore_client = sofascore.Client()
@@ -407,7 +413,7 @@ class Game:
             # remove it from the list afterwards.
             h = _find_closest_match(s, holdet_candidates)
             holdet_candidates.remove(h)
-            self.candidates.append(Candidate(h, s))
+            self.candidates.append(candidate(h, s))
         logging.info(f"Collected data from {len(self.candidates)} candidates")
 
     def _get_sofascore(
@@ -471,28 +477,45 @@ class Game:
         return df
 
 
-def xGrowthML(c: Candidate, model) -> float:
-    # Catch players with no stats, most likely because they never played.
-    # The model is going to complain if this happens so we need to just
-    # return 0
-    if len(c.generate_dataframe()) == 0:
-        return 0.0
-    return model.predict(c.generate_dataframe())[-1]
+class CandidateEMA(Candidate):
+    def __init__(self, holdet: Holdet, sofascore: Sofascore) -> None:
+        super().__init__(holdet, sofascore)
+
+    def xGrowthEMA(self, alpha: float) -> float:
+        """
+        Predict the growth for the next game using exponential moving average
+        (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
+        values give more weight to recent stats.
+        """
+        ema = 0.0
+        for i, round in enumerate(sorted(self.rounds)):
+            if i == 0:
+                ema = round.xGrowth
+            else:
+                ema = alpha * round.xGrowth + (1 - alpha) * ema
+        return ema
+
+    @property
+    def xValue(self) -> float:
+        if self.captain:
+            return self.value + self.xGrowthEMA(0.5) * 2
+        return self.value + self.xGrowthEMA(0.5)
 
 
-def xGrowthEMA(c: Candidate, alpha: float) -> float:
-    """
-    Predict the growth for the next game using exponential moving average
-    (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
-    values give more weight to recent stats.
-    """
-    ema = 0.0
-    for i, round in enumerate(sorted(c.rounds)):
-        if i == 0:
-            ema = round.xGrowth
-        else:
-            ema = alpha * round.xGrowth + (1 - alpha) * ema
-    return ema
+class CandidateML(Candidate):
+    def __init__(self, holdet: Holdet, sofascore: Sofascore) -> None:
+        super().__init__(holdet, sofascore)
+
+    def xGrowthML(self, model) -> float:
+        """
+        Predict the growth for the next game using a machine learning model.
+        """
+        # Catch players with no stats, most likely because they never played.
+        # The model is going to complain if this happens so we need to just
+        # return 0
+        if len(self.generate_dataframe()) == 0:
+            return 0.0
+        return model.predict(self.generate_dataframe())[-1]
 
 
 class Model:
@@ -597,26 +620,18 @@ def main():
         handlers=[RichHandler()],
     )
 
-    game = Game()
-    model = Model()
-    breakpoint()
-    df = game.generate_dataframe()
-    model.train(df)
-    print(model.evaluate(df))
+    game = Game(CandidateEMA)
 
-    candidate = game.candidates[0]
-    print(candidate.generate_dataframe())
-    print(model.predict(candidate.generate_dataframe()))
+    # model = Model()
+    # df = game.generate_dataframe()
+    # model.train(df)
+    # print(model.evaluate(df))
 
-    # def xValue(c: Candidate) -> float:
-    #     """
-    #     Simple evaluator using model to predict the growth
-    #     """
-    #     if c.captain:
-    #         return c.value + (xGrowthML(c, model) * 2)
-    #     return c.value + xGrowthML(c, model)
+    # candidate = game.candidates[0]
+    # print(candidate.generate_dataframe())
+    # print(model.predict(candidate.generate_dataframe()))
 
-    # logging.info("Finding optimal team...")
-    # solution = lp.find_optimal_team(game.candidates, xValue, 70 * 1000000)
+    logging.info("Finding optimal team...")
+    solution = lp.find_optimal_team(game.candidates, 50 * 1000000)
 
-    # print(Formation(solution, xValue))
+    print(Formation(solution))
