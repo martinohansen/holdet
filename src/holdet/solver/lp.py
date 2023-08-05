@@ -132,7 +132,6 @@ def find_optimal_team(candidates: Sequence[Candidate], budget: int):
     problem += sum(variables[(c.id, c.captain)] for c in candidates if c.forward) <= 3
 
     # Solve the problem
-    problem.writeLP("problem.lp")
     status = problem.solve(PULP_CBC_CMD(msg=0))
     logging.debug(f"LpStatus: {LpStatus[status]}")
 

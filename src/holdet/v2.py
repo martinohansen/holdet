@@ -8,13 +8,10 @@ import numpy as np
 import pandas as pd
 from keras.layers import LSTM, Dense  # type: ignore
 from keras.models import Sequential  # type: ignore
-from rich import print
-from rich.logging import RichHandler
 from rich.table import Table
 from sklearn.preprocessing import MinMaxScaler  # type: ignore
 
 from holdet.data import holdet, sofascore
-from holdet.solver import lp
 
 from . import util
 
@@ -164,7 +161,7 @@ class Candidate:
 
     @property
     def similarity(self) -> float:
-        return _similarity(self.person.player, self.avatar.player)
+        return util.get_similarity(self.person.player, self.avatar.player)
 
     @property
     def rounds(self) -> list[Round]:
@@ -364,7 +361,7 @@ class Game:
         ):
             # Find the closest match in Holdet for the current Sofascore player and
             # remove it from the list afterwards.
-            h = self._find_closest_match(s, holdet_candidates)
+            h = util.find_closest_match(s, holdet_candidates)
             holdet_candidates.remove(h)
             self.candidates.append(candidate(h, s))
         logging.info(f"Collected data from {len(self.candidates)} candidates")
@@ -417,36 +414,6 @@ class Game:
 
         return list(players_dict.values())
 
-    def _similarity(self, s: sofascore.Player, h: holdet.Player) -> float:
-        team_similarity = util.jaccard_similarity(s.team.name, h.team.name)
-        name_similarity = util.jaccard_similarity(s.name, h.person.name)
-
-        # Calculate the overall similarity as the average of the team and
-        # name similarities
-        overall_similarity = (team_similarity + name_similarity) / 2
-
-        return overall_similarity
-
-    def _find_closest_match(
-        self, s: Sofascore, holdet_candidates: list[Holdet]
-    ) -> Holdet:
-        max_similarity = 0.0
-        closest_match_idx = None
-
-        for h in holdet_candidates:
-            # Read the similarity between players
-            similarity = self._similarity(s.player, h.player)
-
-            # If the similarity is greater than the maximum similarity update the
-            # closest match
-            if similarity > max_similarity:
-                max_similarity = similarity
-                closest_match_idx = holdet_candidates.index(h)
-
-        if closest_match_idx is None:
-            raise ValueError("No match found")
-        return holdet_candidates[closest_match_idx]
-
     def generate_dataframe(self) -> pd.DataFrame:
         """
         Return a combined dataframe for all the candidates.
@@ -458,47 +425,6 @@ class Game:
         df = pd.concat(data)
         logging.info(f"Created data frame: {len(df)} rows, {len(df.columns)} columns")
         return df
-
-
-class CandidateEMA(Candidate):
-    def __init__(self, holdet: Holdet, sofascore: Sofascore) -> None:
-        super().__init__(holdet, sofascore)
-
-    def xGrowthEMA(self, alpha: float) -> float:
-        """
-        Predict the growth for the next game using exponential moving average
-        (EMA). Set alpha to adjust the smoothing factor, between 0 and 1. Higher
-        values give more weight to recent stats.
-        """
-        ema = 0.0
-        for i, round in enumerate(sorted(self.rounds)):
-            if i == 0:
-                ema = round.xGrowth
-            else:
-                ema = alpha * round.xGrowth + (1 - alpha) * ema
-        return ema
-
-    @property
-    def xValue(self) -> float:
-        if self.captain:
-            return self.value + self.xGrowthEMA(0.5) * 2
-        return self.value + self.xGrowthEMA(0.5)
-
-
-class CandidateML(Candidate):
-    def __init__(self, holdet: Holdet, sofascore: Sofascore) -> None:
-        super().__init__(holdet, sofascore)
-
-    def xGrowthML(self, model) -> float:
-        """
-        Predict the growth for the next game using a machine learning model.
-        """
-        # Catch players with no stats, most likely because they never played.
-        # The model is going to complain if this happens so we need to just
-        # return 0
-        if len(self.generate_dataframe()) == 0:
-            return 0.0
-        return model.predict(self.generate_dataframe())[-1]
 
 
 class Model:
@@ -592,29 +518,3 @@ class Model:
         X, _ = self.prepare_data(df)
         y = self.model.predict(X)
         return self.scaler_y.inverse_transform(y)
-
-
-def main():
-    # Setup logger and console with Rich formatting
-    logging.basicConfig(
-        level="INFO",
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler()],
-    )
-
-    game = Game(CandidateEMA)
-
-    # model = Model()
-    # df = game.generate_dataframe()
-    # model.train(df)
-    # print(model.evaluate(df))
-
-    # candidate = game.candidates[0]
-    # print(candidate.generate_dataframe())
-    # print(model.predict(candidate.generate_dataframe()))
-
-    logging.info("Finding optimal team...")
-    solution = lp.find_optimal_team(game.candidates, 50 * 1000000)
-
-    print(Formation(solution))
