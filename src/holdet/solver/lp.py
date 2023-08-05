@@ -1,6 +1,6 @@
 import copy
 import logging
-from typing import Callable, Protocol, Sequence
+from typing import Protocol, Sequence
 
 from pulp import (  # type: ignore
     PULP_CBC_CMD,
@@ -48,6 +48,14 @@ class Candidate(Protocol):
     def price(self) -> float:
         ...
 
+    @property
+    def value(self) -> float:
+        ...
+
+    @property
+    def xValue(self) -> float:
+        ...
+
     def __eq__(self, other: object) -> bool:
         ...
 
@@ -55,19 +63,7 @@ class Candidate(Protocol):
         ...
 
 
-xValue = Callable[[Candidate], float]
-"""
-xValue takes a candidates and returns the value that we expect that candidate to
-have in the next round. How that prediction is made is up to the implementation
-of the function.
-"""
-
-
-def find_optimal_team(
-    candidates: Sequence[Candidate],
-    evaluator: xValue,
-    budget: int,
-):
+def find_optimal_team(candidates: Sequence[Candidate], budget: int):
     """
     Takes a list of candidates and returns the 11 candidates that maximize the
     combined value within the rules of the game.
@@ -92,8 +88,8 @@ def find_optimal_team(
             identifier, 0, 1, LpInteger
         )
 
-    # Set the objective to maximize the combined evaluator output
-    problem += sum(variables[(c.id, c.captain)] * evaluator(c) for c in candidates)
+    # Set the objective function to maximize the combined xGrowth of the team
+    problem += sum(variables[(c.id, c.captain)] * c.xValue for c in candidates)
 
     # Add the constraint that no two identical candidates can be selected
     for candidate in candidates:
