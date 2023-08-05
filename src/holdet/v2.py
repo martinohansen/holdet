@@ -384,26 +384,24 @@ class Game:
         self.holdet_client = holdet.Client()
         self.sofascore_client = sofascore.Client()
 
-        tournament = self.holdet_client.tournament(holdet.PRIMER_LEAGUE)
-
-        logging.info("Fetching data...")
+        logging.info("Fetching data from Holdet...")
         holdet_candidates = self._get_holdet(
-            tournament,
+            self.holdet_client.tournament(holdet.PRIMER_LEAGUE),
             [
                 holdet.Game(holdet.PRIMER_LEAGUE_FALL_2022),
                 holdet.Game(holdet.PRIMER_LEAGUE_SPRING_2023),
+                holdet.Game(holdet.PRIMER_LEAGUE_FALL_2023),
             ],
         )
+
+        logging.info("Fetching data from Sofascore...")
+        tournament = sofascore.Tournament(sofascore.PRIMER_LEAGUE)
         for s in self._get_sofascore(
-            sofascore.Tournament(
-                sofascore.PRIMER_LEAGUE,
-                seasons=[
-                    sofascore.Season(
-                        sofascore.PRIMER_LEAGUE,
-                        sofascore.PRIMER_LEAGUE_2022_2023,
-                    )
-                ],
-            )
+            tournament,
+            seasons=[
+                tournament.season(sofascore.PRIMER_LEAGUE_2022_2023),
+                tournament.season(sofascore.PRIMER_LEAGUE_2023_2024),
+            ],
         ):
             # Find the closest match in Holdet for the current Sofascore player and
             # remove it from the list afterwards.
@@ -412,11 +410,18 @@ class Game:
             self.candidates.append(Candidate(h, s))
         logging.info(f"Collected data from {len(self.candidates)} candidates")
 
-    def _get_sofascore(self, tournament: sofascore.Tournament) -> list[Sofascore]:
+    def _get_sofascore(
+        self,
+        tournament: sofascore.Tournament,
+        seasons: list[sofascore.Season],
+    ) -> list[Sofascore]:
         players: list[Sofascore] = []
-        # TODO: Read rounds from API
-        for round in range(1, 37):
-            for season in tournament.seasons:
+        for season in seasons:
+            logging.info(f"Fetching data for {season}...")
+            # Get the current round for the season and iterate over all the
+            # rounds so far to gather the player stats.
+            current_round = self.sofascore_client.current_round(tournament, season)
+            for round in range(1, current_round + 1):
                 for game in self.sofascore_client.games(season, round):
                     lineup = self.sofascore_client.lineup(game).all
                     for player, stats in lineup:
@@ -439,6 +444,7 @@ class Game:
         # Use a dict for lookups to improve speed
         players_dict: dict[int, Holdet] = {}
         for game in games:
+            logging.info(f"Fetching data for {game}...")
             for round in self.holdet_client.rounds(game):
                 stats = self.holdet_client.statistics(tournament, game, round)
                 for stat in stats:
@@ -593,7 +599,7 @@ def main():
 
     game = Game()
     model = Model()
-
+    breakpoint()
     df = game.generate_dataframe()
     model.train(df)
     print(model.evaluate(df))

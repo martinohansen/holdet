@@ -9,6 +9,7 @@ from . import util
 
 PRIMER_LEAGUE = 17
 PRIMER_LEAGUE_2022_2023 = 41886
+PRIMER_LEAGUE_2023_2024 = 52186
 
 
 @dataclass
@@ -24,7 +25,13 @@ class Season:
 @dataclass
 class Tournament:
     id: int
-    seasons: list[Season]
+
+    @property
+    def endpoint(self) -> str:
+        return f"/unique-tournament/{self.id}"
+
+    def season(self, season_id: int) -> Season:
+        return Season(self.id, season_id)
 
 
 @dataclass
@@ -267,3 +274,11 @@ class Client:
     def statistics(self, game: Game, player: Player) -> Statistics:
         response = self._get(f"/event/{game.id}/player/{player.id}/statistics")
         return Statistics(game=Game, **response["statistics"])
+
+    def current_round(self, tournament: Tournament, season: Season) -> int:
+        response = self._get(tournament.endpoint + f"/season/{season.id}/rounds")
+        return response["currentRound"]["round"]
+
+    def rounds(self, tournament: Tournament, season: Season) -> int:
+        response = self._get(tournament.endpoint + f"/season/{season.id}/info")
+        return response["numberOfRounds"]
