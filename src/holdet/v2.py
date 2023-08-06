@@ -4,16 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Type
 
-import numpy as np
-import pandas as pd
-from keras.layers import LSTM, Dense  # type: ignore
-from keras.models import Sequential  # type: ignore
 from rich.table import Table
-from sklearn.preprocessing import MinMaxScaler  # type: ignore
 
 from holdet.data import holdet, sofascore
-
-from . import util
 
 
 @dataclass
@@ -161,7 +154,7 @@ class Candidate:
 
     @property
     def similarity(self) -> float:
-        return util.get_similarity(self.person.player, self.avatar.player)
+        return get_similarity(self.person.player, self.avatar.player)
 
     @property
     def rounds(self) -> list[Round]:
@@ -188,76 +181,6 @@ class Candidate:
             for stat in self.avatar.stats
             if stat.round.end < datetime.now(tz=timezone.utc)
         ]
-
-    def features(self, stat: sofascore.Statistics) -> dict[str, float | int]:
-        """
-        Return a dictionary with all the features that can be used to train a
-        model.
-        """
-
-        return {
-            # TODO: Add data from betting sites
-            "opponent": stat.game.away.id
-            if stat.side == sofascore.Side.HOME
-            else stat.game.home.id,
-            "side": stat.side.value,
-            "substitute": int(stat.substitute),
-            "assists": stat.assists,
-            "expectedAssists": stat.expectedAssists,
-            "expectedGoals": stat.expectedGoals,
-            "goals": stat.goals,
-            "goalsPrevented": stat.goalsPrevented,
-            "minutesPlayed": stat.minutesPlayed,
-            "onTargetScoringAttempt": stat.onTargetScoringAttempt,
-            "savedShotsFromInsideTheBox": stat.savedShotsFromInsideTheBox,
-            "saves": stat.saves,
-            "team_goals": stat.team_goals,
-            "team_goals_conceded": stat.team_goals_conceded,
-            "win": int(stat.win),
-            "loss": int(stat.loss),
-            "draw": int(stat.draw),
-            "clean_sheet": int(stat.clean_sheet),
-            "decisive_goal_for_draw": int(stat.decisive_goal_for_draw),
-            "decisive_goal_for_win": int(stat.decisive_goal_for_win),
-        }
-
-    def aggregate_features(self, round: Round) -> dict:
-        """
-        Aggregate all the features from a round into one. This is needed for
-        rounds with multiple games in them. The features are summed together.
-
-        Its not ideal for stuff like opponent or side which will simply be added
-        together, but thats we can do for now.
-        """
-        round_stats: dict[str, int | float] = {}
-        for stat in round.stats:
-            for key, value in self.features(stat).items():
-                round_stats[key] = round_stats.get(key, 0) + value
-        return round_stats
-
-    def generate_dataframe(self) -> pd.DataFrame:
-        """
-        Generate a dataframe for the candidate with features for every round
-        """
-        data = []
-
-        for round in self.rounds:
-            row = {
-                "id": self.id,
-                "round": round.number,
-                "position": round.position.value,
-                "team": self.team_id,
-                "growth": round.growth,
-            }
-
-            # Append all features to the row
-            features = self.aggregate_features(round)
-            for key, value in features.items():
-                row[key] = value
-
-            data.append(row)
-
-        return pd.DataFrame(data)
 
     def __eq__(self, other: object):
         if not isinstance(other, Candidate):
@@ -361,7 +284,7 @@ class Game:
         ):
             # Find the closest match in Holdet for the current Sofascore player and
             # remove it from the list afterwards.
-            h = util.find_closest_match(s, holdet_candidates)
+            h = find_closest_match(s, holdet_candidates)
             holdet_candidates.remove(h)
             self.candidates.append(candidate(h, s))
         logging.info(f"Collected data from {len(self.candidates)} candidates")
@@ -414,107 +337,51 @@ class Game:
 
         return list(players_dict.values())
 
-    def generate_dataframe(self) -> pd.DataFrame:
-        """
-        Return a combined dataframe for all the candidates.
-        """
-        data = []
-        for candidate in self.candidates:
-            data.append(candidate.generate_dataframe())
 
-        df = pd.concat(data)
-        logging.info(f"Created data frame: {len(df)} rows, {len(df.columns)} columns")
-        return df
+def jaccard_similarity(str1: str, str2: str) -> float:
+    # Convert the strings to sets of characters
+    set1 = set(str1)
+    set2 = set(str2)
+
+    # Calculate the size of the intersection of the sets
+    intersection = set1 & set2
+    intersection_size = len(intersection)
+
+    # Calculate the size of the union of the sets
+    union = set1 | set2
+    union_size = len(union)
+
+    # Calculate the Jaccard similarity
+    similarity = intersection_size / union_size
+
+    return similarity
 
 
-class Model:
-    def __init__(self, n_steps: int = 10) -> None:
-        self.n_steps = n_steps
+def get_similarity(s: sofascore.Player, h: holdet.Player) -> float:
+    team_similarity = jaccard_similarity(s.team.name, h.team.name)
+    name_similarity = jaccard_similarity(s.name, h.person.name)
 
-        self.model = Sequential()
-        self.scaler_x = MinMaxScaler(feature_range=(0, 1))
-        self.scaler_y = MinMaxScaler(feature_range=(0, 1))
+    # Calculate the overall similarity as the average of the team and
+    # name similarities
+    overall_similarity = (team_similarity + name_similarity) / 2
 
-    def prepare_data(self, df: pd.DataFrame):
-        """
-        Prepare the data for training the model. This includes normalizing the
-        data and combining the data into a X and y array.
-        """
+    return overall_similarity
 
-        # NaN values is often because no stat was recorded for the given player
-        # for that game. That means that the player was not on the pitch and
-        # thus 0 is the proper value to use.
-        df.fillna(0, inplace=True)
 
-        # Normalize the data to gain better results. Using separate scaler to
-        # allow for independently inverting again.
-        df[df.columns.difference(["growth"])] = self.scaler_x.fit_transform(
-            df[df.columns.difference(["growth"])]
-        )
-        df["growth"] = self.scaler_y.fit_transform(df[["growth"]])
+def find_closest_match(s: Sofascore, holdet_candidates: list[Holdet]) -> Holdet:
+    max_similarity = 0.0
+    closest_match_idx = None
 
-        # Combine number of time_steps into a single array and set the target to the
-        # growth of the following round. E.g. combine values from round 1-10 and set
-        # the target to the growth of round 11.
-        time_steps = self.n_steps
-        features = []
-        target = []
-        for _, group in df.groupby("id"):
-            group.drop(columns=["id", "round"], inplace=True)
+    for h in holdet_candidates:
+        # Read the similarity between players
+        similarity = get_similarity(s.player, h.player)
 
-            for i in range(time_steps, len(group)):
-                features.append(group.iloc[i - time_steps : i].values)
-                target.append(group.iloc[i]["growth"])
+        # If the similarity is greater than the maximum similarity update the
+        # closest match
+        if similarity > max_similarity:
+            max_similarity = similarity
+            closest_match_idx = holdet_candidates.index(h)
 
-        return np.array(features), np.array(target)
-
-    def train(self, df: pd.DataFrame) -> None:
-        """
-        Train the LSTM model using the given data frame. Returns the model for use
-        to predict the growth of a player.
-        """
-        X, y = self.prepare_data(df)
-
-        # Build model with layers according to the data
-        self.model.add(
-            LSTM(
-                units=50,
-                return_sequences=True,
-                input_shape=(
-                    X.shape[1],  # Number of time steps
-                    X.shape[2],  # Number of features
-                ),
-            )
-        )
-        self.model.add(LSTM(units=50))
-        self.model.add(Dense(units=50, activation="relu"))
-        self.model.add(Dense(units=1))
-
-        self.model.compile(optimizer="adam", loss="mean_squared_error")
-
-        # Train the model
-        logging.info("Training model...")
-        self.model.fit(
-            X,
-            y,
-            epochs=10,  # Number of iterations over the entire dataset
-            validation_split=0.2,  # Use 20% of the data for validation
-        )
-
-    def evaluate(self, df: pd.DataFrame) -> str:
-        """
-        Return the loss and RMSE in a string for the given data frame.
-        """
-        X, y = self.prepare_data(df)
-        loss = self.model.evaluate(X, y)
-        return f"Model evaluation: {loss=!r}"
-
-    def predict(self, df: pd.DataFrame):
-        """
-        Predict the growth for the next game using the given data frame. The
-        data frame should contain the same columns as the one used for training
-        the model.
-        """
-        X, _ = self.prepare_data(df)
-        y = self.model.predict(X)
-        return self.scaler_y.inverse_transform(y)
+    if closest_match_idx is None:
+        raise ValueError("No match found")
+    return holdet_candidates[closest_match_idx]
