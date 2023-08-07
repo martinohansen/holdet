@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Type
 
-from holdet.candidate import Candidate
+from holdet import util
 from holdet.data import holdet, sofascore
 
 
 @dataclass
-class Holdet:
+class Avatar:
     player: holdet.Player
     stats: list[holdet.Statistics]
 
 
 @dataclass
-class Sofascore:
+class Person:
     player: sofascore.Player
     stats: list[sofascore.Statistics]
 
@@ -87,8 +88,8 @@ class Round:
 
 @dataclass
 class BaseCandidate:
-    avatar: Holdet  # Avatar is the player from the game
-    person: Sofascore  # Person is the player from real world
+    avatar: Avatar  # Avatar is the player from the game
+    person: Person  # Person is the player from real world
 
     captain: bool = False  # Whether the player is the captain or not
     on_team: bool = False  # Whether the player is on the team or not
@@ -196,15 +197,69 @@ class BaseCandidate:
         )
 
 
+def _get_avatars(
+    client: holdet.Client,
+    tournament: holdet.Tournament,
+    games: list[holdet.Game],
+) -> list[Avatar]:
+    # Use a dict for lookups to improve speed
+    players_dict: dict[int, Avatar] = {}
+    for game in games:
+        logging.info(f"Fetching data for {game}...")
+        for round in client.rounds(game):
+            stats = client.statistics(tournament, game, round)
+            for stat in stats:
+                player_id = stat.player.id
+                if player_id in players_dict:
+                    players_dict[player_id].stats.append(stat)
+                else:
+                    players_dict[player_id] = Avatar(player=stat.player, stats=[stat])
+
+    return list(players_dict.values())
+
+
+def _get_persons(
+    client: sofascore.Client,
+    tournament: sofascore.Tournament,
+    seasons: list[sofascore.Season],
+) -> list[Person]:
+    players: list[Person] = []
+    for season in seasons:
+        logging.info(f"Fetching data for {season}...")
+        # Get the current round for the season and iterate over all the
+        # rounds so far to gather the player stats.
+        current_round = client.current_round(tournament, season)
+        for round in range(1, current_round + 1):
+            for game in client.games(season, round):
+                lineup = client.lineup(game).all
+                for player, stats in lineup:
+                    found = False
+                    for p in players:
+                        if player == p.player:
+                            p.stats.append(stats)
+                            found = True
+                            break
+                    if not found:
+                        players.append(Person(player=player, stats=[stats]))
+
+    return players
+
+
+@dataclass
 class Game:
-    def __init__(self, candidate: Type[BaseCandidate]) -> None:
-        self.candidates: list[Candidate] = []
-        self.holdet_client = holdet.Client()
-        self.sofascore_client = sofascore.Client()
+    candidates: list[BaseCandidate]
+
+    @classmethod
+    def new(cls, candidate: Type[BaseCandidate]) -> "Game":
+        holdet_client = holdet.Client()
+        sofascore_client = sofascore.Client()
+
+        candidates: list[BaseCandidate] = []
 
         logging.info("Fetching data from Holdet...")
-        holdet_candidates = self._get_holdet(
-            self.holdet_client.tournament(holdet.PRIMER_LEAGUE),
+        avatars = _get_avatars(
+            holdet_client,
+            holdet_client.tournament(holdet.PRIMER_LEAGUE),
             [
                 holdet.Game(holdet.PRIMER_LEAGUE_FALL_2022),
                 holdet.Game(holdet.PRIMER_LEAGUE_SPRING_2023),
@@ -214,7 +269,8 @@ class Game:
 
         logging.info("Fetching data from Sofascore...")
         tournament = sofascore.Tournament(sofascore.PRIMER_LEAGUE)
-        for s in self._get_sofascore(
+        for p in _get_persons(
+            sofascore_client,
             tournament,
             seasons=[
                 tournament.season(sofascore.PRIMER_LEAGUE_2022_2023),
@@ -223,58 +279,22 @@ class Game:
         ):
             # Find the closest match in Holdet for the current Sofascore player and
             # remove it from the list afterwards.
-            h = find_closest_match(s, holdet_candidates)
-            holdet_candidates.remove(h)
-            self.candidates.append(candidate(h, s))
-        logging.info(f"Collected data from {len(self.candidates)} candidates")
+            a = find_closest_match(p, avatars)
+            avatars.remove(a)
+            candidates.append(candidate(a, p))
 
-    def _get_sofascore(
-        self,
-        tournament: sofascore.Tournament,
-        seasons: list[sofascore.Season],
-    ) -> list[Sofascore]:
-        players: list[Sofascore] = []
-        for season in seasons:
-            logging.info(f"Fetching data for {season}...")
-            # Get the current round for the season and iterate over all the
-            # rounds so far to gather the player stats.
-            current_round = self.sofascore_client.current_round(tournament, season)
-            for round in range(1, current_round + 1):
-                for game in self.sofascore_client.games(season, round):
-                    lineup = self.sofascore_client.lineup(game).all
-                    for player, stats in lineup:
-                        found = False
-                        for p in players:
-                            if player == p.player:
-                                p.stats.append(stats)
-                                found = True
-                                break
-                        if not found:
-                            players.append(Sofascore(player=player, stats=[stats]))
+        logging.info(f"Collected data from {len(candidates)} candidates")
+        return Game(candidates=candidates)
 
-        return players
-
-    def _get_holdet(
-        self,
-        tournament: holdet.Tournament,
-        games: list[holdet.Game],
-    ) -> list[Holdet]:
-        # Use a dict for lookups to improve speed
-        players_dict: dict[int, Holdet] = {}
-        for game in games:
-            logging.info(f"Fetching data for {game}...")
-            for round in self.holdet_client.rounds(game):
-                stats = self.holdet_client.statistics(tournament, game, round)
-                for stat in stats:
-                    player_id = stat.player.id
-                    if player_id in players_dict:
-                        players_dict[player_id].stats.append(stat)
-                    else:
-                        players_dict[player_id] = Holdet(
-                            player=stat.player, stats=[stat]
-                        )
-
-        return list(players_dict.values())
+    def find_candidate(self, name: str) -> None | BaseCandidate:
+        """Find candidate by name"""
+        choices = [c.name for c in self.candidates]
+        closest_match = util.get_closest_match(name, choices)
+        if closest_match:
+            for c in self.candidates:
+                if c.name == closest_match:
+                    return c
+        return None
 
 
 def jaccard_similarity(str1: str, str2: str) -> float:
@@ -296,9 +316,9 @@ def jaccard_similarity(str1: str, str2: str) -> float:
     return similarity
 
 
-def get_similarity(s: sofascore.Player, h: holdet.Player) -> float:
-    team_similarity = jaccard_similarity(s.team.name, h.team.name)
-    name_similarity = jaccard_similarity(s.name, h.person.name)
+def get_similarity(p: sofascore.Player, a: holdet.Player) -> float:
+    team_similarity = jaccard_similarity(p.team.name, a.team.name)
+    name_similarity = jaccard_similarity(p.name, a.person.name)
 
     # Calculate the overall similarity as the average of the team and
     # name similarities
@@ -307,20 +327,20 @@ def get_similarity(s: sofascore.Player, h: holdet.Player) -> float:
     return overall_similarity
 
 
-def find_closest_match(s: Sofascore, holdet_candidates: list[Holdet]) -> Holdet:
+def find_closest_match(s: Person, avatar: list[Avatar]) -> Avatar:
     max_similarity = 0.0
     closest_match_idx = None
 
-    for h in holdet_candidates:
+    for a in avatar:
         # Read the similarity between players
-        similarity = get_similarity(s.player, h.player)
+        similarity = get_similarity(s.player, a.player)
 
         # If the similarity is greater than the maximum similarity update the
         # closest match
         if similarity > max_similarity:
             max_similarity = similarity
-            closest_match_idx = holdet_candidates.index(h)
+            closest_match_idx = avatar.index(a)
 
     if closest_match_idx is None:
         raise ValueError("No match found")
-    return holdet_candidates[closest_match_idx]
+    return avatar[closest_match_idx]

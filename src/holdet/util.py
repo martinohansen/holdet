@@ -1,6 +1,3 @@
-from holdet.candidate import Candidate
-
-
 def levenshtein_distance(s1, s2):
     # Implement the Levenshtein distance algorithm here
     # See https://en.wikipedia.org/wiki/Levenshtein_distance for more information
@@ -31,14 +28,3 @@ def get_closest_match(name, choices):
             closest_match = choice
             min_distance = distance
     return closest_match
-
-
-def find_candidate(candidates: list[Candidate], find: str) -> None | Candidate:
-    """Search for player by name"""
-    player_names = [c.name for c in candidates]
-    closest_match = get_closest_match(find, player_names)
-    if closest_match:
-        for c in candidates:
-            if c.name == closest_match:
-                return c
-    return None

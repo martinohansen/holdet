@@ -57,6 +57,8 @@ class Formation:
                     position.capitalize(),
                     str(player),
                     f"{xGrowth / 1000:.0f}K",
+                    # End the section after the last player is added
+                    end_section=True if index == 10 else False,
                 )
 
                 # Avoid repeating the position name in the same row
@@ -71,7 +73,6 @@ class Formation:
             "Total",
             f"value={total_value / 1000000:.1f}M",
             f"{total_xGrowth / 1000:.0f}K",
-            end_section=True,
         )
 
         return table
