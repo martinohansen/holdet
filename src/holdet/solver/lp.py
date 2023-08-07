@@ -1,6 +1,6 @@
 import copy
 import logging
-from typing import Protocol, Sequence
+from typing import Sequence
 
 from pulp import (  # type: ignore
     PULP_CBC_CMD,
@@ -12,55 +12,7 @@ from pulp import (  # type: ignore
     value,
 )
 
-
-class Candidate(Protocol):
-    captain: bool
-
-    @property
-    def id(self) -> int:
-        ...
-
-    @property
-    def name(self) -> str:
-        ...
-
-    @property
-    def team(self) -> str:
-        ...
-
-    @property
-    def keeper(self) -> bool:
-        ...
-
-    @property
-    def defense(self) -> bool:
-        ...
-
-    @property
-    def midfielder(self) -> bool:
-        ...
-
-    @property
-    def forward(self) -> bool:
-        ...
-
-    @property
-    def price(self) -> float:
-        ...
-
-    @property
-    def value(self) -> float:
-        ...
-
-    @property
-    def xValue(self) -> float:
-        ...
-
-    def __eq__(self, other: object) -> bool:
-        ...
-
-    def __hash__(self) -> int:
-        ...
+from holdet.candidate import Candidate
 
 
 def find_optimal_team(candidates: Sequence[Candidate], budget: int):

@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Type
 
-from rich.table import Table
-
+from holdet.candidate import Candidate
 from holdet.data import holdet, sofascore
 
 
@@ -87,7 +86,7 @@ class Round:
 
 
 @dataclass
-class Candidate:
+class BaseCandidate:
     avatar: Holdet  # Avatar is the player from the game
     person: Sofascore  # Person is the player from real world
 
@@ -182,12 +181,10 @@ class Candidate:
             if stat.round.end < datetime.now(tz=timezone.utc)
         ]
 
-    def __eq__(self, other: object):
-        if not isinstance(other, Candidate):
-            return NotImplemented
+    def __eq__(self, other):
         return self.id == other.id
 
-    def __lt__(self, other: "Candidate"):
+    def __lt__(self, other):
         return self.value < other.value
 
     def __hash__(self):
@@ -199,66 +196,8 @@ class Candidate:
         )
 
 
-class Formation:
-    def __init__(self, solution: list[Candidate]):
-        self.position: dict[str, list[Candidate]] = {
-            "keeper": [],
-            "defenses": [],
-            "midfielders": [],
-            "forwards": [],
-        }
-        self._populate(solution)
-
-    def _populate(self, solution: list[Candidate]):
-        for player in solution:
-            if player.keeper:
-                self.position["keeper"].append(player)
-            if player.defense:
-                self.position["defenses"].append(player)
-            if player.midfielder:
-                self.position["midfielders"].append(player)
-            if player.forward:
-                self.position["forwards"].append(player)
-
-    def __iter__(self):
-        return iter(self.position.items())
-
-    def __repr__(self) -> str:
-        return (
-            f"{len(self.position['defenses'])}-"
-            f"{len(self.position['midfielders'])}-"
-            f"{len(self.position['forwards'])}"
-        )
-
-    def __rich__(self) -> Table:
-        table = Table(title=f"\nXI ({self})")
-        table.add_column("Position")
-        table.add_column("Players")
-        table.add_column("xGrowth", justify="right")
-        for index, (position, players) in enumerate(self):
-            for player in players:
-                # Calculate the xGrowth by subtracting the player's expected
-                # value from the actual value.
-                xGrowth = player.xValue - player.value
-
-                table.add_row(
-                    position.capitalize(),
-                    str(player),
-                    f"{xGrowth / 1000:.0f}K",
-                )
-
-                # Avoid repeating the position name in the same row
-                position = ""
-
-            # Add an empty row between positions
-            if index < 3:
-                table.add_row()
-
-        return table
-
-
 class Game:
-    def __init__(self, candidate: Type[Candidate]) -> None:
+    def __init__(self, candidate: Type[BaseCandidate]) -> None:
         self.candidates: list[Candidate] = []
         self.holdet_client = holdet.Client()
         self.sofascore_client = sofascore.Client()
