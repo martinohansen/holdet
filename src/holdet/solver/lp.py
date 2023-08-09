@@ -12,10 +12,10 @@ from pulp import (  # type: ignore
     value,
 )
 
-from holdet.candidate import Candidate
+from holdet.campaign import BaseCandidate
 
 
-def find_optimal_team(candidates: Sequence[Candidate], budget: int):
+def find_optimal_team(candidates: Sequence[BaseCandidate], budget: int):
     """
     Takes a list of candidates and returns the 11 candidates that maximize the
     combined value within the rules of the game.

@@ -1,11 +1,11 @@
 from rich.table import Table
 
-from holdet.candidate import Candidate
+from holdet.campaign import BaseCandidate
 
 
 class Formation:
-    def __init__(self, solution: list[Candidate]):
-        self.position: dict[str, list[Candidate]] = {
+    def __init__(self, solution: list[BaseCandidate]):
+        self.position: dict[str, list[BaseCandidate]] = {
             "keeper": [],
             "defenses": [],
             "midfielders": [],
@@ -13,7 +13,7 @@ class Formation:
         }
         self._populate(solution)
 
-    def _populate(self, solution: list[Candidate]):
+    def _populate(self, solution: list[BaseCandidate]):
         for player in solution:
             if player.keeper:
                 self.position["keeper"].append(player)
