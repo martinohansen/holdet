@@ -5,15 +5,20 @@ from enum import Enum
 
 from . import util
 
-PRIMER_LEAGUE = 422
+PRIMER_LEAGUE_2022_2023 = 422
 PRIMER_LEAGUE_FALL_2022 = 629
 PRIMER_LEAGUE_SPRING_2023 = 644
+
+PRIMER_LEAGUE_2023_2024 = 446
 PRIMER_LEAGUE_FALL_2023 = 666
 
 
 @dataclass
 class Game:
     id: int
+    name: str
+    start: datetime
+    end: datetime
 
 
 @dataclass
@@ -52,6 +57,7 @@ class Player:
 
 @dataclass
 class Round:
+    game: Game
     number: int
     start: datetime
     end: datetime
@@ -157,8 +163,11 @@ class Client:
         for index, round in enumerate(g["rounds"]):
             rounds.append(
                 Round(
+                    game=game,
                     number=index + 1,
-                    start=datetime.fromisoformat(round["start"]),
+                    # At holdet the start is the time which transfer opens while
+                    # close is the time the round actually begins.
+                    start=datetime.fromisoformat(round["close"]),
                     end=datetime.fromisoformat(round["end"]),
                 )
             )
@@ -194,12 +203,22 @@ class Client:
 
             statistics.append(
                 Statistics(
-                    round,
-                    player,
-                    values,
+                    round=round,
+                    player=player,
+                    values=values,
                 )
             )
         return statistics
+
+    def game(self, id: int) -> Game:
+        game = self._get(f"/games/{id}")
+
+        return Game(
+            id=game["id"],
+            name=game["name"],
+            start=datetime.fromisoformat(game["start"]),
+            end=datetime.fromisoformat(game["end"]),
+        )
 
     def tournament(self, id: int) -> Tournament:
         tournament = self._get(f"/tournaments/{id}")

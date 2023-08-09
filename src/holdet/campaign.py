@@ -23,13 +23,20 @@ class Person:
 
 @dataclass
 class Round:
+    season: int
     number: int
     values: holdet.Values
     stats: list[sofascore.Statistics]
     position: holdet.Position
 
+    start: datetime
+    end: datetime
+
     @property
     def xGrowth(self) -> float:
+        """
+        Estimated round growth based on "expected" stats, e.g. xG, xA, etc.
+        """
         growth: float = 0
 
         # The points vary depending on the position
@@ -79,10 +86,25 @@ class Round:
 
     def __repr__(self) -> str:
         return (
-            f"Round(number={self.number}, games={len(self.stats)},"
-            f" growth={self.values.growth / 1000:.0f}K,"
-            f" xGrowth={self.xGrowth / 1000:.0f}K,"
-            f" diff={self.diff / 1000:+.0f}K)"
+            f"Round(season={self.season}, number={self.number},"
+            f" games={len(self.stats)}, growth={self.values.growth / 1000:.0f}K,"
+            f" xGrowth={self.xGrowth / 1000:.0f}K, diff={self.diff / 1000:+.0f}K)"
+        )
+
+    @classmethod
+    def from_stat(cls, stat: holdet.Statistics) -> "Round":
+        """
+        Returns a Round object from a holdet.Statistics. The sofascore stats
+        have to be added after the fact.
+        """
+        return Round(
+            season=stat.round.game.id,
+            number=stat.round.number,
+            values=stat.values,
+            stats=[],
+            position=stat.player.position,
+            start=stat.round.start,
+            end=stat.round.end,
         )
 
 
@@ -165,22 +187,36 @@ class BaseCandidate:
         """
 
         def zip(stat: holdet.Statistics) -> Round:
-            return Round(
-                number=stat.round.number,
-                values=stat.values,
-                stats=[
-                    s
-                    for s in self.person.stats
-                    if stat.round.start <= s.game.start <= stat.round.end
-                ],
-                position=stat.player.position,
-            )
+            r = Round.from_stat(stat)
+            # Append stats from sofascore if they are within the period of the
+            # round.
+            r.stats = [
+                s
+                for s in self.person.stats
+                if stat.round.start <= s.game.start <= stat.round.end
+            ]
+            return r
 
         return [
             zip(stat)
             for stat in self.avatar.stats
             if stat.round.end < datetime.now(tz=timezone.utc)
         ]
+
+    def next_rounds(self, n: int) -> list[Round]:
+        """
+        Return until n number of next rounds from the game.
+        """
+        n_rounds: list[Round] = []
+        now = datetime.now(tz=timezone.utc)
+        for stat in self.avatar.stats:
+            if now <= stat.round.start:
+                n_rounds.append(Round.from_stat(stat))
+                if len(n_rounds) == n:
+                    return n_rounds
+
+        # Return max number of n_rounds we could find
+        return n_rounds
 
     def __eq__(self, other):
         return self.id == other.id
@@ -209,6 +245,10 @@ def _get_avatars(
         for round in client.rounds(game):
             stats = client.statistics(tournament, game, round)
             for stat in stats:
+                # TODO: The player id is not unique across tournaments. We need
+                # to match on person instead of player. Basically turn the loop
+                # around to go over all persons in each tournament and get the
+                # stats for the person instead of player.
                 player_id = stat.player.id
                 if player_id in players_dict:
                     players_dict[player_id].stats.append(stat)
@@ -258,12 +298,16 @@ class Game:
 
         logging.info("Fetching data from Holdet...")
         avatars = _get_avatars(
+            # TODO: Accept the tournament, game and season values as arguments
+            # in some clever way to make the user able to chose which and how
+            # much data to use. Even better if we can make it data source
+            # agnostic.
             holdet_client,
-            holdet_client.tournament(holdet.PRIMER_LEAGUE),
+            holdet_client.tournament(holdet.PRIMER_LEAGUE_2023_2024),
             [
-                holdet.Game(holdet.PRIMER_LEAGUE_FALL_2022),
-                holdet.Game(holdet.PRIMER_LEAGUE_SPRING_2023),
-                holdet.Game(holdet.PRIMER_LEAGUE_FALL_2023),
+                holdet_client.game(holdet.PRIMER_LEAGUE_FALL_2022),
+                holdet_client.game(holdet.PRIMER_LEAGUE_SPRING_2023),
+                holdet_client.game(holdet.PRIMER_LEAGUE_FALL_2023),
             ],
         )
 
@@ -277,11 +321,14 @@ class Game:
                 tournament.season(sofascore.PRIMER_LEAGUE_2023_2024),
             ],
         ):
-            # Find the closest match in Holdet for the current Sofascore player and
-            # remove it from the list afterwards.
+            # Find the closest match, if any, in Holdet for the current
+            # Sofascore player and remove it from the list afterwards.
             a = find_closest_match(p, avatars)
-            avatars.remove(a)
-            candidates.append(candidate(a, p))
+            if a is not None:
+                avatars.remove(a)
+                candidates.append(candidate(a, p))
+            else:
+                logging.debug(f"Found no avatar in game for: {p}")
 
         logging.info(f"Collected data from {len(candidates)} candidates")
         return Game(candidates=candidates)
@@ -327,7 +374,7 @@ def get_similarity(p: sofascore.Player, a: holdet.Player) -> float:
     return overall_similarity
 
 
-def find_closest_match(s: Person, avatar: list[Avatar]) -> Avatar:
+def find_closest_match(s: Person, avatar: list[Avatar]) -> Avatar | None:
     max_similarity = 0.0
     closest_match_idx = None
 
@@ -341,6 +388,8 @@ def find_closest_match(s: Person, avatar: list[Avatar]) -> Avatar:
             max_similarity = similarity
             closest_match_idx = avatar.index(a)
 
+    # If no match was found it might mean that the player is not in the game.
+    # This will happen for the players that was on relegated teams for example.
     if closest_match_idx is None:
-        raise ValueError("No match found")
+        return None
     return avatar[closest_match_idx]
