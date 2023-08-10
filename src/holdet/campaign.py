@@ -134,7 +134,10 @@ class BaseCandidate:
 
     @property
     def value(self) -> int:
-        return self.rounds[-1].values.value
+        try:
+            return self.rounds[-1].values.value
+        except IndexError:
+            return 0
 
     @property
     def keeper(self) -> bool:
