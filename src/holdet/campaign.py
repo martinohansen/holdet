@@ -235,27 +235,24 @@ class BaseCandidate:
 
 def _get_avatars(
     client: holdet.Client,
-    tournament: holdet.Tournament,
+    tournaments: list[holdet.Tournament],
     games: list[holdet.Game],
 ) -> list[Avatar]:
     # Use a dict for lookups to improve speed
-    players_dict: dict[int, Avatar] = {}
+    persons: dict[int, Avatar] = {}
     for game in games:
         logging.info(f"Fetching data for {game}...")
         for round in client.rounds(game):
-            stats = client.statistics(tournament, game, round)
-            for stat in stats:
-                # TODO: The player id is not unique across tournaments. We need
-                # to match on person instead of player. Basically turn the loop
-                # around to go over all persons in each tournament and get the
-                # stats for the person instead of player.
-                player_id = stat.player.id
-                if player_id in players_dict:
-                    players_dict[player_id].stats.append(stat)
-                else:
-                    players_dict[player_id] = Avatar(player=stat.player, stats=[stat])
+            for tournament in tournaments:
+                stats = client.statistics(tournament, game, round)
+                for stat in stats:
+                    person_id = stat.player.person.id
+                    if person_id in persons:
+                        persons[person_id].stats.append(stat)
+                    else:
+                        persons[person_id] = Avatar(player=stat.player, stats=[stat])
 
-    return list(players_dict.values())
+    return list(persons.values())
 
 
 def _get_persons(
@@ -291,6 +288,10 @@ class Game:
 
     @classmethod
     def new(cls, candidate: Type[BaseCandidate]) -> "Game":
+        # TODO: Accept the tournament, game and season values as arguments
+        # in some clever way to make the user able to chose which and how
+        # much data to use. Even better if we can make it data source
+        # agnostic.
         holdet_client = holdet.Client()
         sofascore_client = sofascore.Client()
 
@@ -298,12 +299,11 @@ class Game:
 
         logging.info("Fetching data from Holdet...")
         avatars = _get_avatars(
-            # TODO: Accept the tournament, game and season values as arguments
-            # in some clever way to make the user able to chose which and how
-            # much data to use. Even better if we can make it data source
-            # agnostic.
             holdet_client,
-            holdet_client.tournament(holdet.PRIMER_LEAGUE_2023_2024),
+            [
+                holdet_client.tournament(holdet.PRIMER_LEAGUE_2022_2023),
+                holdet_client.tournament(holdet.PRIMER_LEAGUE_2023_2024),
+            ],
             [
                 holdet_client.game(holdet.PRIMER_LEAGUE_FALL_2022),
                 holdet_client.game(holdet.PRIMER_LEAGUE_SPRING_2023),
@@ -374,11 +374,11 @@ def get_similarity(p: sofascore.Player, a: holdet.Player) -> float:
     return overall_similarity
 
 
-def find_closest_match(s: Person, avatar: list[Avatar]) -> Avatar | None:
+def find_closest_match(s: Person, avatars: list[Avatar]) -> Avatar | None:
     max_similarity = 0.0
     closest_match_idx = None
 
-    for a in avatar:
+    for a in avatars:
         # Read the similarity between players
         similarity = get_similarity(s.player, a.player)
 
@@ -386,10 +386,10 @@ def find_closest_match(s: Person, avatar: list[Avatar]) -> Avatar | None:
         # closest match
         if similarity > max_similarity:
             max_similarity = similarity
-            closest_match_idx = avatar.index(a)
+            closest_match_idx = avatars.index(a)
 
     # If no match was found it might mean that the player is not in the game.
     # This will happen for the players that was on relegated teams for example.
     if closest_match_idx is None:
         return None
-    return avatar[closest_match_idx]
+    return avatars[closest_match_idx]
