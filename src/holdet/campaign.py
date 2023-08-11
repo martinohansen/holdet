@@ -13,6 +13,7 @@ from holdet.data import holdet, sofascore
 class Avatar:
     player: holdet.Player
     stats: list[holdet.Statistics]
+    schedule: list[holdet.Schedule]
 
 
 @dataclass
@@ -139,7 +140,8 @@ class BaseCandidate:
     @property
     def value(self) -> int:
         try:
-            return self.rounds[-1].values.value
+            return self.next_rounds(1)[0].values.value
+        # If not part of the game anymore, there will be no next round.
         except IndexError:
             return 0
 
@@ -251,13 +253,29 @@ def _get_avatars(
         logging.info(f"Fetching data for {game}...")
         for round in client.rounds(game):
             for tournament in tournaments:
+                # Get all stats and full schedule for tournament
                 stats = client.statistics(tournament, game, round)
+                schedules = client.schedule(tournament)
                 for stat in stats:
+                    # Append stat to existing person or create a new one if we
+                    # have yet to encounter the person.
                     person_id = stat.player.person.id
                     if person_id in persons:
                         persons[person_id].stats.append(stat)
                     else:
-                        persons[person_id] = Avatar(player=stat.player, stats=[stat])
+                        # Filter out any schedule that contains the players team
+                        # and add it to the avatar.
+                        player_schedule: list[holdet.Schedule] = []
+                        for schedule in schedules:
+                            if schedule.contains(stat.player.team):
+                                player_schedule.append(schedule)
+
+                        # Create a new avatar for the person
+                        persons[person_id] = Avatar(
+                            player=stat.player,
+                            schedule=player_schedule,
+                            stats=[stat],
+                        )
 
     return list(persons.values())
 
@@ -292,6 +310,15 @@ def _get_persons(
 @dataclass
 class Game:
     candidates: list[BaseCandidate]
+
+    def __post_init__(self):
+        # Do post cleanup on candidates
+        for candidate in self.candidates:
+            # Remove every candidate that has a value of 0. This most likely
+            # mean that the player is no longer part of the game. If we dont do
+            # this the solver will pick all the 0 value players.
+            if candidate.value == 0:
+                self.candidates.remove(candidate)
 
     @classmethod
     def new(cls, candidate: Type[BaseCandidate]) -> "Game":

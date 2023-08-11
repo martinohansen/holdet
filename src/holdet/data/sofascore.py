@@ -60,10 +60,15 @@ class Game:
     tournament: Season
 
     startTimestamp: int
+    tz: timezone = timezone.utc
 
     @property
     def start(self) -> datetime:
-        return datetime.fromtimestamp(self.startTimestamp, tz=timezone.utc)
+        return datetime.fromtimestamp(self.startTimestamp, tz=self.tz)
+
+    @property
+    def started(self) -> bool:
+        return self.start < datetime.now(tz=self.tz)
 
     def __lt__(self, other: "Game"):
         return self.startTimestamp < other.startTimestamp
@@ -278,7 +283,3 @@ class Client:
     def current_round(self, tournament: Tournament, season: Season) -> int:
         response = self._get(tournament.endpoint + f"/season/{season.id}/rounds")
         return response["currentRound"]["round"]
-
-    def rounds(self, tournament: Tournament, season: Season) -> int:
-        response = self._get(tournament.endpoint + f"/season/{season.id}/info")
-        return response["numberOfRounds"]

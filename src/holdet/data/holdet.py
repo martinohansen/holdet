@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+import requests
+
 from . import util
 
 PRIMER_LEAGUE_2022_2023 = 422
@@ -89,6 +91,17 @@ class Statistics:
 
 
 @dataclass
+class Schedule:
+    start: datetime
+    status: str
+    away: Team
+    home: Team
+
+    def contains(self, team: Team) -> bool:
+        return team == self.away or team == self.home
+
+
+@dataclass
 class Points:
     position: Position
 
@@ -144,15 +157,24 @@ class Client:
         self.base_url = base_url
         self.http = util.CachedLimiterSession.new(".holdet_cache")
 
-        self._params: str = "?appid=holdet"
+        # Makes a http session without caching
+        self.http_no_cache = requests.session()
+
+        self._params: str = "appid=holdet"
         self.headers = {
             "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh)",
         }
 
-    def _get(self, endpoint, params=None):
+    def _get(self, endpoint, params=None, no_cache=False):
         url = self.base_url + endpoint
         params = params + self._params if params else self._params
-        response = self.http.get(url, headers=self.headers, params=params)
+
+        if no_cache:
+            response = self.http_no_cache.get(url, headers=self.headers, params=params)
+        else:
+            response = self.http.get(url, headers=self.headers, params=params)
+
         response.raise_for_status()
         return response.json()
 
@@ -267,3 +289,40 @@ class Client:
             players,
             persons,
         )
+
+    def schedule(self, tournament: Tournament) -> list[Schedule]:
+        schedules = self._get(
+            f"/tournaments/{tournament.id}/schedule",
+            # Using the cached session makes the json decoding fail for this
+            # call. It works for every other call but not this, until we find
+            # the cause disable cache for this call.
+            no_cache=True,
+        )
+        s: list[Schedule] = []
+        for schedule in schedules:
+            # Find the teams in the tournament that are playing in this game and
+            # add them to the schedule
+            for participant in schedule["participants"]:
+                match participant["type"]:
+                    case "away":
+                        away = next(
+                            t
+                            for t in tournament.teams
+                            if t.id == participant["team"]["id"]
+                        )
+                    case "home":
+                        home = next(
+                            t
+                            for t in tournament.teams
+                            if t.id == participant["team"]["id"]
+                        )
+            s.append(
+                Schedule(
+                    start=datetime.fromisoformat(schedule["start"]),
+                    status=schedule["status"],
+                    away=away,
+                    home=home,
+                )
+            )
+
+        return s
