@@ -30,6 +30,8 @@ class Round:
     stats: list[sofascore.Statistics]
     position: holdet.Position
 
+    schedules: list[holdet.Schedule]
+
     start: datetime
     end: datetime
 
@@ -84,7 +86,7 @@ class Round:
 
     @property
     def matches(self) -> int:
-        return len(self.stats)
+        return len(self.schedules)
 
     def __lt__(self, other: "Round") -> bool:
         return self.number < other.number
@@ -108,6 +110,7 @@ class Round:
             values=stat.values,
             stats=[],
             position=stat.player.position,
+            schedules=[],
             start=stat.round.start,
             end=stat.round.end,
         )
@@ -197,12 +200,17 @@ class BaseCandidate:
 
         def zip(stat: holdet.Statistics) -> Round:
             r = Round.from_stat(stat)
-            # Append stats from sofascore if they are within the period of the
-            # round.
+            # Append stats from Sofascore and schedule from Holdet if they are
+            # within the period of the round.
             r.stats = [
                 s
                 for s in self.person.stats
                 if stat.round.start <= s.game.start <= stat.round.end
+            ]
+            r.schedules = [
+                s
+                for s in self.avatar.schedule
+                if stat.round.start <= s.start <= stat.round.end
             ]
             return r
 
@@ -220,7 +228,15 @@ class BaseCandidate:
         now = datetime.now(tz=timezone.utc)
         for stat in self.avatar.stats:
             if now <= stat.round.start:
-                n_rounds.append(Round.from_stat(stat))
+                r = Round.from_stat(stat)
+
+                r.schedules = [
+                    s
+                    for s in self.avatar.schedule
+                    if stat.round.start <= s.start <= stat.round.end
+                ]
+
+                n_rounds.append(r)
                 if len(n_rounds) == n:
                     return n_rounds
 

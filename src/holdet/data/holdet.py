@@ -49,6 +49,11 @@ class Position(Enum):
     FORWARD = 9
 
 
+class Side(Enum):
+    HOME = 0
+    AWAY = 1
+
+
 @dataclass
 class Player:
     id: int
@@ -99,6 +104,24 @@ class Schedule:
 
     def contains(self, team: Team) -> bool:
         return team == self.away or team == self.home
+
+    def opponent(self, team: Team) -> Team:
+        """Return team opponent in the schedule game"""
+        if team == self.away:
+            return self.home
+        elif team == self.home:
+            return self.away
+        else:
+            raise ValueError("Team not in schedule")
+
+    def side(self, team: Team) -> Side:
+        """Return the side of team in the schedule game"""
+        if team == self.away:
+            return Side.AWAY
+        elif team == self.home:
+            return Side.HOME
+        else:
+            raise ValueError("Team not in schedule")
 
 
 @dataclass
