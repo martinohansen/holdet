@@ -81,13 +81,17 @@ class Round:
     def diff(self) -> float:
         return self.xGrowth - self.growth
 
+    @property
+    def matches(self) -> int:
+        return len(self.stats)
+
     def __lt__(self, other: "Round") -> bool:
         return self.number < other.number
 
     def __repr__(self) -> str:
         return (
             f"Round(season={self.season}, number={self.number},"
-            f" games={len(self.stats)}, growth={self.values.growth / 1000:.0f}K,"
+            f" matches={self.matches}, growth={self.values.growth / 1000:.0f}K,"
             f" xGrowth={self.xGrowth / 1000:.0f}K, diff={self.diff / 1000:+.0f}K)"
         )
 
@@ -304,13 +308,17 @@ class Game:
         avatars = _get_avatars(
             holdet_client,
             [
-                holdet_client.tournament(holdet.PRIMER_LEAGUE_2022_2023),
                 holdet_client.tournament(holdet.PRIMER_LEAGUE_2023_2024),
+                holdet_client.tournament(holdet.PRIMER_LEAGUE_2022_2023),
             ],
             [
-                holdet_client.game(holdet.PRIMER_LEAGUE_FALL_2022),
-                holdet_client.game(holdet.PRIMER_LEAGUE_SPRING_2023),
+                # Putting the newest season first to make sure that the newest
+                # data is used to create the candidates. E.g. if a player was
+                # marked as a midfielder in the newest season but a forward in
+                # the previous season we want to use the newest data.
                 holdet_client.game(holdet.PRIMER_LEAGUE_FALL_2023),
+                holdet_client.game(holdet.PRIMER_LEAGUE_SPRING_2023),
+                holdet_client.game(holdet.PRIMER_LEAGUE_FALL_2022),
             ],
         )
 
