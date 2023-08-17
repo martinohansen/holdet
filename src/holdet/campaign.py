@@ -305,9 +305,9 @@ def _get_persons(
     for season in seasons:
         logging.info(f"Fetching data for {season}...")
         # Get the current round for the season and iterate over all the
-        # rounds so far to gather the player stats.
+        # rounds up to current round to gather the players stats.
         current_round = client.current_round(tournament, season)
-        for round in range(1, current_round + 1):
+        for round in range(1, current_round):
             for game in client.games(season, round):
                 lineup = client.lineup(game).all
                 for player, stats in lineup:

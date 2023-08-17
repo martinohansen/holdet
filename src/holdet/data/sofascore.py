@@ -73,6 +73,12 @@ class Game:
     def __lt__(self, other: "Game"):
         return self.startTimestamp < other.startTimestamp
 
+    def __repr__(self) -> str:
+        return (
+            f"Game(id={self.id!r}, tournament={self.tournament!r},"
+            f" round={self.round!r} home={self.home!r}, away={self.away!r})"
+        )
+
 
 @dataclass
 class Statistics:
